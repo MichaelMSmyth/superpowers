@@ -1,0 +1,11 @@
+{
+  "skill": "brainstorming",
+  "positive": [
+    "I want to add a new export feature to my app. Where should we start?",
+    "Let's build a small tool that renames photo files by date."
+  ],
+  "negative": [
+    "What does the -u flag do in git push?",
+    "Summarize this paragraph in one sentence: The quick brown fox jumps over the lazy dog."
+  ]
+}
