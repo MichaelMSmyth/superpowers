@@ -1,3 +1,5 @@
 # Python bytecode from the tools/ test suite (test_drift_report.py imports drift_report).
 __pycache__/
 *.pyc
+# Cached coverage venv bootstrapped by tools/coverage-floor.sh (holds coverage + its data file).
+.covenv/
