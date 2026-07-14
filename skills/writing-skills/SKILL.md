@@ -19,6 +19,15 @@ You write test cases (pressure scenarios with subagents), watch them fail (basel
 
 **Official guidance:** For Anthropic's official skill authoring best practices, see anthropic-best-practices.md. This document provides additional patterns and guidelines that complement the TDD-focused approach in this skill.
 
+## Fork doctrine (E1, 2026-07-14)
+
+This fork authors skills under the longspec 16-principle rubric — full text at [docs/doctrine/skill-principles.md](docs/doctrine/skill-principles.md). Four bindings onto this harness:
+
+- **State what *is*, not what *isn't* (§1)** — gate refusals name the offense, the canonical form, then an `Averted:` line; "don't" lives only in that slot.
+- **One goal sentence over twenty steps (§3)** — the enforcement ladder pushes procedure into hooks/CLIs; skill text keeps judgment only.
+- **Anti-patterns are rationalizations, not slips (§6)** — the Red Flags tables are load-bearing, eval-tuned content; keep them intact.
+- **Conflict-arbitration order (§16)** — runtime instruction priority: Michael's explicit instructions > fork skills > upstream defaults.
+
 ## What is a Skill?
 
 A **skill** is a reference guide for proven techniques, patterns, or tools. Skills help future Claude instances find and apply effective approaches.
