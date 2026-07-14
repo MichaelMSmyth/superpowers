@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 # Cached coverage venv bootstrapped by tools/coverage-floor.sh (holds coverage + its data file).
 .covenv/
+# Cached mutmut<3 venv bootstrapped by tools/mutation-check.sh (phase-close mutation audit).
+.mutenv/
