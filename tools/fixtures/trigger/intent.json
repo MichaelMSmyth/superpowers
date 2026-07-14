@@ -1,0 +1,11 @@
+{
+  "skill": "intent",
+  "positive": [
+    "I've got a half-formed feeling about where this project should go - something like a studio that runs itself, but I can't put it into words yet. Help me pin down what I actually mean.",
+    "You know that quality the best CLIs have, where they sort of teach you as you use them? I want our tool to have... that. Whatever that is. Where do we even start?"
+  ],
+  "negative": [
+    "Rename the variable count to total_files in tools/report.py and update its two call sites.",
+    "What is the difference between git merge and git rebase?"
+  ]
+}
