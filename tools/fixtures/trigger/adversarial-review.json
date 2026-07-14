@@ -1,0 +1,11 @@
+{
+  "skill": "adversarial-review",
+  "positive": [
+    "Here's the implementation plan for the payments refactor. Red-team it before I ratify - I want it torn apart by fresh eyes, not polished.",
+    "This spec looks suspiciously clean. Try to break its assumptions before we build a month of work on top of it."
+  ],
+  "negative": [
+    "Review this function for style nits and suggest better variable names.",
+    "Summarize the last three commits on this branch."
+  ]
+}
