@@ -34,7 +34,13 @@ CONFIG="$REPO_ROOT/dod.config"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --config)
-      CONFIG="${2:-}"; shift 2 ;;
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --config requires a path argument." >&2
+        echo "  Correct form: tools/dod-check.sh --config <path>" >&2
+        echo "  Averted: hanging on a flag with no value instead of failing loudly." >&2
+        exit 2
+      fi
+      CONFIG="$2"; shift 2 ;;
     --config=*)
       CONFIG="${1#--config=}"; shift ;;
     *)
