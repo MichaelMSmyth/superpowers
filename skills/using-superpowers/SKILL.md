@@ -115,3 +115,4 @@ The skill itself tells you which.
 ## User Instructions
 
 Instructions say WHAT, not HOW. "Add X" or "Fix Y" doesn't mean skip workflows.
+<!-- CANARY-2026-07-14 edit-test loop probe -->
