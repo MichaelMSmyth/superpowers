@@ -151,23 +151,98 @@ class TestTimeoutPartialStream(unittest.TestCase):
         fired, mode, note = self._run_with_timeout(self._fire_line("intent"))
         self.assertTrue(fired)
         self.assertEqual(mode, "json")
-        self.assertIn("before timeout", note)
+        # Exact note, not membership: the mutant that XX-wraps the whole string
+        # ("XXfired before timeout...XX") keeps "before timeout" as a substring,
+        # so assertIn survives it. Pin the literal. (kills survivor 128)
+        self.assertEqual(note, "fired before timeout at 1s (partial stream)")
 
     def test_bytes_partial_stream_decoded(self):
         fired, _, note = self._run_with_timeout(self._fire_line("intent").encode())
         self.assertTrue(fired)
         self.assertIn("before timeout", note)
 
+    def test_invalid_utf8_partial_decoded_via_replace(self):
+        # Invalid UTF-8 in the partial stream must decode via errors="replace",
+        # NOT raise: a fire on the clean first line still counts. The garbage is
+        # on its own line so the fire JSON stays parseable. The mutant that
+        # changes errors to "XXreplaceXX" raises LookupError on the bad bytes and
+        # propagates out of run_once, so this test errors against it. (kills 124)
+        raw = self._fire_line("intent").encode() + b"\n\xff\xfe garbage\n"
+        fired, mode, _ = self._run_with_timeout(raw)
+        self.assertTrue(fired)
+        self.assertEqual(mode, "json")
+
     def test_no_fire_in_partial_stream_stays_timeout(self):
         fired, mode, note = self._run_with_timeout("some unrelated text\n")
         self.assertFalse(fired)
         self.assertEqual(mode, "timeout")
-        self.assertIn("no fire in partial stream", note)
+        # Exact note (see above): "no fire in partial stream" survives XX-wrap as
+        # a substring; pin the literal. (kills survivor 132)
+        self.assertEqual(note, "timed out after 1s, no fire in partial stream")
 
     def test_none_partial_stream_stays_timeout(self):
         fired, mode, _ = self._run_with_timeout(None)
         self.assertFalse(fired)
         self.assertEqual(mode, "timeout")
+
+
+class TestRunOnceNormalReturn(unittest.TestCase):
+    """run_once's NON-timeout path: cmd construction (blindness + stream-json
+    doctrine), normal-return fire detection, and rc annotation. The flip test
+    left this whole path untested — subprocess.run was only ever mocked to
+    RAISE, never to RETURN a completed process."""
+
+    @staticmethod
+    def _fire_line(skill):
+        return json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Skill",
+             "input": {"skill": "superpowers-extended-cc:" + skill}}]}})
+
+    def _run(self, returncode, stdout, timeout=42):
+        proc = mock.Mock(returncode=returncode, stdout=stdout)
+        with mock.patch.object(te.subprocess, "run", return_value=proc) as m:
+            result = te.run_once("do a thing", "intent", "/work", timeout=timeout)
+        return result, m
+
+    def test_fire_returns_json_empty_note_and_exact_cmd(self):
+        (fired, mode, note), m = self._run(1, self._fire_line("intent"))
+        # A fire on a normal return: json mode, no rc note (rc annotated only
+        # when NOT fired). Exact triple kills the note-init mutants (138/139)
+        # and the detect_fire-unpack mutant (137). (kills 137, 138, 139)
+        self.assertEqual((fired, mode, note), (True, "json", ""))
+        # Blindness + format doctrine, pinned exactly: plain -p, max-turns 2,
+        # stream-json, verbose; captured, text, DEVNULL stdin, our timeout.
+        # (kills the cmd/argv + subprocess-kwarg survivors 111-120)
+        args, kwargs = m.call_args
+        self.assertEqual(args[0], ["claude", "-p", "do a thing",
+                                   "--max-turns", "2",
+                                   "--output-format", "stream-json", "--verbose"])
+        self.assertEqual(kwargs["cwd"], "/work")
+        self.assertIs(kwargs["capture_output"], True)
+        self.assertIs(kwargs["text"], True)
+        self.assertEqual(kwargs["timeout"], 42)
+        self.assertIs(kwargs["stdin"], te.subprocess.DEVNULL)
+
+    def test_no_fire_rc1_is_annotated_exactly(self):
+        # rc=1, no fire -> note "rc=1" exactly. Discriminates != 0 from == 0 and
+        # != 1, the `and`->`or`/`and fired` guard mutants, and the note-format
+        # mutants. (kills 140, 141, 142, 144, 145, 146)
+        (fired, _mode, note), _ = self._run(1, "plain text, no fire here")
+        self.assertFalse(fired)
+        self.assertEqual(note, "rc=1")
+
+    def test_no_fire_rc0_gets_no_note(self):
+        # rc=0, no fire -> empty note. The `and`->`or` mutant would annotate
+        # here (0 != 0 is False, but `or not fired` is True). (kills 143; also 140)
+        (fired, _mode, note), _ = self._run(0, "plain text, no fire here")
+        self.assertFalse(fired)
+        self.assertEqual(note, "")
+
+    def test_cli_missing_returns_error_triple(self):
+        # FileNotFoundError branch, pinned exactly. (kills 134, 135, 136)
+        with mock.patch.object(te.subprocess, "run", side_effect=FileNotFoundError()):
+            self.assertEqual(te.run_once("p", "intent", ".", timeout=5),
+                             (False, "error", "claude CLI not found on PATH"))
 
 
 if __name__ == "__main__":
