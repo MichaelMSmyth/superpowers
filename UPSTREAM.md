@@ -3,7 +3,7 @@
 **Upstream:** pcvelz/superpowers (contributor, not authority — spec §3).
 **Watch remote:** obra/superpowers (original; pcvelz lags it by weeks-to-months).
 **Fork point / last synced:** 20abe1f90723391958e0b156293be91820178a5b (6.0.5-dev, 2026-07-14)
-**Edit-test loop:** (recorded by canary test — see below)
+**Edit-test loop:** commit → bump version in .claude-plugin/plugin.json (`<upstream>-mod.N`) → marketplace update → plugin update → restart session. Verified 2026-07-14 (same-version pickup does NOT work).
 
 ## Sync ritual (curated, never auto — on our schedule)
 1. `git fetch upstream obra`
