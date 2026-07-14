@@ -1,0 +1,11 @@
+{
+  "skill": "tiering",
+  "positive": [
+    "Before we dive in - how much ceremony does this deserve? It's a one-line typo fix in a comment, but last time a 'small fix' ate the afternoon.",
+    "I'm about to redesign the persistence layer. What level of process should we wrap around this - full spread and review, or just do it?"
+  ],
+  "negative": [
+    "Convert this CSV row to JSON: name,age -> Bob,3",
+    "Why is the sky blue?"
+  ]
+}
