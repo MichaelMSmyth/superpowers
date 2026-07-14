@@ -61,6 +61,12 @@ the assumption assay — four measurements per choice:
 - **inversion** — can the presumed asset instead harm us?
 - **reality** — what does current reality say, measured now, not remembered?
 
+**The type-design lens's paired habit.** The adoption this lens mechanizes has two
+halves: a generation-time habit — code is WRITTEN parse-don't-validate, illegal
+states made unrepresentable at the boundary as it is generated — and this lens,
+which audits what the habit missed. The habit costs your human partner nothing and
+is never a design-time approval step; the lens is its backstop, not its substitute.
+
 **Lens selection.** The coordinator picks the lens set from the artifact's kind:
 
 - plans and specs → **premise, spec-coverage, correctness, process-safety** at minimum.
