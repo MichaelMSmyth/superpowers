@@ -1,0 +1,11 @@
+{
+  "skill": "environment-research",
+  "positive": [
+    "We're about to build against the plugin-cache API and I don't actually know how it behaves when versions collide. Poke it in a sandbox first - try to make it fail - before we design anything.",
+    "Before designing the sync layer, figure out what the marketplace CLI actually does with a stale cache. Experiment somewhere disposable and write down what surprised us."
+  ],
+  "negative": [
+    "Add a docstring to the parse_config function in tools/config.py.",
+    "What time zone does the CI server report by default?"
+  ]
+}
