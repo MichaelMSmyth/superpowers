@@ -1,0 +1,3 @@
+# Python bytecode from the tools/ test suite (test_drift_report.py imports drift_report).
+__pycache__/
+*.pyc
