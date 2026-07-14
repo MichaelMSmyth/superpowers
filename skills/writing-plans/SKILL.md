@@ -107,6 +107,8 @@ If the plan schedules questions for the user (a DECIDE list, an AskUserQuestion 
 - [ ] [Concrete, testable criterion]
 - [ ] [Another criterion]
 
+**Property-shaped:** [yes — <the property> | no — <why example tests suffice>]
+
 **Verify:** `exact test command` → expected output
 
 **Steps:**
@@ -143,6 +145,19 @@ git add tests/path/test.py src/path/file.py
 git commit -m "feat: add specific feature"
 ```
 ````
+
+### Property-shaped contracts (fork amendment, 2026-07-14)
+
+Every task carries an explicit `**Property-shaped:**` verdict — an accepted null
+("no — <reason>") beats an unread instruction. When the pinned contract has an
+algebraic form (a partition, an inverse pair, an idempotent, an invariant under
+permutation), answer **yes** and pin at least one property-based test alongside
+the example tests: the property states the rule, the framework generates the
+inputs, so the falsifying cases are author-unseen (input-coverage independence —
+example tests written by the same lineage as the code share its blind spots).
+`tools/plan-lint.sh <plan.md>` checks the marker's presence (soft; `--check` for
+CI). Rationale: docs/findings/2026-07-14-methodology-survey.md, candidate 1
+(narrowed form).
 
 ## No Placeholders
 
