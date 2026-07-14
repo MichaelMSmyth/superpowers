@@ -3,7 +3,7 @@
 **Upstream:** pcvelz/superpowers (contributor, not authority — spec §3).
 **Watch remote:** obra/superpowers (original; pcvelz lags it by weeks-to-months).
 **Fork point / last synced:** 20abe1f90723391958e0b156293be91820178a5b (6.0.5-dev, 2026-07-14)
-**Edit-test loop:** commit → bump version in .claude-plugin/plugin.json (`<upstream>-mod.N`) → marketplace update → plugin update → restart session. Verified 2026-07-14 (same-version pickup does NOT work).
+**Edit-test loop:** commit → bump version in .claude-plugin/plugin.json (`<upstream>-mod.N`) → marketplace update → plugin update → restart session. Verified 2026-07-14 (same-version pickup does NOT work). Use the fully-qualified name `superpowers-extended-cc@superpowers-extended-cc-marketplace` for install/update (unqualified name fails).
 
 ## Sync ritual (curated, never auto — on our schedule)
 1. `git fetch upstream obra`
@@ -18,5 +18,5 @@
 |------|-----------|-------|
 | 2026-07-14 | (fork point) 20abe1f90723391958e0b156293be91820178a5b | forked at v6.0.5-dev; no sync yet |
 
-## Rollback (verified: pending Task 6)
+## Rollback (verified 2026-07-14, both directions)
 `claude plugin uninstall superpowers-extended-cc && claude plugin marketplace remove superpowers-extended-cc-marketplace && claude plugin marketplace add pcvelz/superpowers && claude plugin install superpowers-extended-cc@superpowers-extended-cc-marketplace`
