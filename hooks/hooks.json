@@ -41,6 +41,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/claims_evidence.py\""
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [

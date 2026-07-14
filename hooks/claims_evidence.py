@@ -31,6 +31,16 @@ surfaced `last_assistant_message`, the final text pre-extracted — a convenient
 shortcut we deliberately do not depend on, keeping the transcript-parse core
 testable against synthetic fixtures.)
 
+DUAL REGISTRATION (2026-07-14): the same engine is wired on TWO events.
+SubagentStop is the transcript route (agent_transcript_path → parse → advisory),
+live wherever that event actually fires. But it never fires in the VSCode
+harness (0 firings/day vs 9 Agent dispatches — see the dead-seam finding at
+docs/findings/2026-07-14-subagentstop-dead-seam.md in the project repo), so a
+PostToolUse registration with matcher `Agent|Task` was added: its
+`tool_response` IS the subagent's final message (extracted via
+`_tool_response_text`), and PostToolUse demonstrably fires here. The event is
+branched on in main(); both routes are advisory and fail open.
+
 Python3 stdlib only.
 """
 
@@ -89,6 +99,23 @@ def final_assistant_text(lines):
     return "\n".join(texts)
 
 
+def _tool_response_text(resp):
+    """Best-effort text extraction from a PostToolUse `tool_response`, whose
+    shape is harness-dependent: a plain string, a list of content blocks,
+    or a dict carrying `text` or nested `content`. Unknown shapes yield ""
+    (the guard is advisory and fail-open — never guess, never raise)."""
+    if isinstance(resp, str):
+        return resp
+    if isinstance(resp, list):
+        return "\n".join(t for t in (_tool_response_text(x) for x in resp) if t)
+    if isinstance(resp, dict):
+        t = resp.get("text")
+        if isinstance(t, str):
+            return t
+        return _tool_response_text(resp.get("content", []))
+    return ""
+
+
 def _line_has_evidence(line):
     """True if `line` carries an evidence marker. The claim phrases are stripped
     first: a claim word must never count as its own evidence (e.g. the "pass" in
@@ -140,6 +167,22 @@ def main():
     try:
         data = json.loads(sys.stdin.read())
         if not isinstance(data, dict):
+            return 0
+        if data.get("hook_event_name") == "PostToolUse":
+            # Re-seam (2026-07-14): SubagentStop never fires in the VSCode
+            # harness (0 firings/day vs 9 Agent dispatches — see
+            # docs/findings/2026-07-14-subagentstop-dead-seam.md in the
+            # project repo). The Agent/Task tool_response IS the subagent's
+            # final message, so the same engine runs against it here.
+            tool = data.get("tool_name")
+            if tool not in ("Agent", "Task"):
+                return 0
+            hits = unevidenced_claims(_tool_response_text(data.get("tool_response")))
+            if not hits:
+                return 0
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": _advisory(hits)}}))
             return 0
         # Prefer the SUBAGENT's own transcript; transcript_path is the main
         # session's (probe 2026-07-14). Fall back for the fixture shape.

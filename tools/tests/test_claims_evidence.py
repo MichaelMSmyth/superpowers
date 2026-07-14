@@ -124,5 +124,95 @@ class TestHookEndToEnd(unittest.TestCase):
         self.assertEqual(p.stdout.strip(), "")
 
 
+class TestPostToolUseSeam(unittest.TestCase):
+    """PostToolUse(Agent|Task) re-seam (B1.1, 2026-07-14): the Agent/Task
+    tool_response IS the subagent's final message, so the same engine runs
+    against it. SubagentStop is a dead seam in the VSCode harness — see
+    docs/findings/2026-07-14-subagentstop-dead-seam.md (project repo)."""
+
+    def _run(self, stdin_text, env_extra=None):
+        env = dict(os.environ)
+        env.pop("SUPERPOWERS_CLAIMS_GUARD", None)
+        if env_extra:
+            env.update(env_extra)
+        return subprocess.run([sys.executable, HOOK], input=stdin_text,
+                              capture_output=True, text=True, env=env)
+
+    def _payload(self, tool_name, tool_response):
+        return json.dumps({"hook_event_name": "PostToolUse",
+                           "tool_name": tool_name,
+                           "tool_response": tool_response})
+
+    def test_flags_bare_claim_from_agent_tool(self):
+        stdin = self._payload("Agent", [
+            {"type": "text", "text": "Done. All tests pass."},
+            {"type": "text", "text": "agentId: abc123 (use SendMessage ...)"}])
+        p = self._run(stdin)
+        self.assertEqual(p.returncode, 0)
+        out = json.loads(p.stdout)
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PostToolUse")
+        self.assertIn("CLAIMS-EVIDENCE",
+                      out["hookSpecificOutput"]["additionalContext"])
+
+    def test_silent_when_evidence_present(self):
+        stdin = self._payload("Agent", [
+            {"type": "text",
+             "text": "All tests pass.\n```\nRan 12 tests in 0.01s\nOK\n```"},
+            {"type": "text", "text": "agentId: abc123 (use SendMessage ...)"}])
+        p = self._run(stdin)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(p.stdout.strip(), "")
+
+    def test_ignores_non_subagent_tools(self):
+        p = self._run(self._payload("Bash", "Bug is fixed."))
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(p.stdout.strip(), "")
+
+    def test_plain_string_tool_response(self):
+        p = self._run(self._payload("Task", "Bug is fixed."))
+        self.assertEqual(p.returncode, 0)
+        self.assertNotEqual(p.stdout.strip(), "")
+        out = json.loads(p.stdout)
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PostToolUse")
+        self.assertIn("CLAIMS-EVIDENCE",
+                      out["hookSpecificOutput"]["additionalContext"])
+
+    def test_dict_content_tool_response(self):
+        stdin = self._payload("Agent", {"content": [
+            {"type": "text", "text": "Implementation is complete."}]})
+        p = self._run(stdin)
+        self.assertEqual(p.returncode, 0)
+        out = json.loads(p.stdout)
+        self.assertIn("CLAIMS-EVIDENCE",
+                      out["hookSpecificOutput"]["additionalContext"])
+
+    def test_fail_open_on_garbage_response(self):
+        for resp in (42, None):
+            p = self._run(self._payload("Agent", resp))
+            self.assertEqual(p.returncode, 0)
+            self.assertEqual(p.stdout.strip(), "")
+
+    def test_kill_switch_silences_posttooluse(self):
+        stdin = self._payload("Agent", [
+            {"type": "text", "text": "Done. All tests pass."},
+            {"type": "text", "text": "agentId: abc123 (use SendMessage ...)"}])
+        p = self._run(stdin, env_extra={"SUPERPOWERS_CLAIMS_GUARD": "0"})
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(p.stdout.strip(), "")
+
+    def test_tool_response_text_shapes(self):
+        self.assertEqual(ce._tool_response_text("plain string"), "plain string")
+        self.assertEqual(
+            ce._tool_response_text([{"type": "text", "text": "a"},
+                                    {"type": "text", "text": "b"}]),
+            "a\nb")
+        self.assertEqual(ce._tool_response_text({"text": "hi"}), "hi")
+        self.assertEqual(
+            ce._tool_response_text(
+                {"content": [{"type": "text", "text": "nested"}]}),
+            "nested")
+        self.assertEqual(ce._tool_response_text(42), "")
+
+
 if __name__ == "__main__":
     unittest.main()
