@@ -7,8 +7,10 @@ import io
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
+import unittest.mock as mock
 
 TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 spec = importlib.util.spec_from_file_location(
@@ -128,6 +130,44 @@ class TestDrySummaryAndMain(unittest.TestCase):
         rc, _, err = self._main(["--skill", "x", "--fixtures", path])
         self.assertEqual(rc, 2)
         self.assertIn("blindness gate", err)
+
+
+class TestTimeoutPartialStream(unittest.TestCase):
+    """run_once must check the partial stream on timeout — a fire that already
+    happened is a fire (finding: 2026-07-14-eval-timeout-artifact)."""
+
+    @staticmethod
+    def _fire_line(skill):
+        return json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Skill",
+             "input": {"skill": "superpowers-extended-cc:" + skill}}]}})
+
+    def _run_with_timeout(self, stdout):
+        exc = subprocess.TimeoutExpired(cmd=["claude"], timeout=1, output=stdout)
+        with mock.patch.object(te.subprocess, "run", side_effect=exc):
+            return te.run_once("prompt", "intent", ".", timeout=1)
+
+    def test_fire_in_partial_stream_counts_as_fire(self):
+        fired, mode, note = self._run_with_timeout(self._fire_line("intent"))
+        self.assertTrue(fired)
+        self.assertEqual(mode, "json")
+        self.assertIn("before timeout", note)
+
+    def test_bytes_partial_stream_decoded(self):
+        fired, _, note = self._run_with_timeout(self._fire_line("intent").encode())
+        self.assertTrue(fired)
+        self.assertIn("before timeout", note)
+
+    def test_no_fire_in_partial_stream_stays_timeout(self):
+        fired, mode, note = self._run_with_timeout("some unrelated text\n")
+        self.assertFalse(fired)
+        self.assertEqual(mode, "timeout")
+        self.assertIn("no fire in partial stream", note)
+
+    def test_none_partial_stream_stays_timeout(self):
+        fired, mode, _ = self._run_with_timeout(None)
+        self.assertFalse(fired)
+        self.assertEqual(mode, "timeout")
 
 
 if __name__ == "__main__":

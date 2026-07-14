@@ -219,7 +219,9 @@ def run_once(prompt, skill, cwd, timeout=RUN_TIMEOUT_S):
     """Run ONE fresh headless session. Returns (fired, mode, note).
 
     Blindness: plain `-p <prompt>`, NO system-prompt flags. A timeout counts as
-    no-fire (noted). Benign 'SessionEnd hook ... cancelled' stderr noise is
+    no-fire (noted) ONLY after the partial stream is checked for a fire — a
+    session killed at the wall may already have fired. Benign 'SessionEnd
+    hook ... cancelled' stderr noise is
     ignored. stream-json+--verbose is required for tool-use visibility.
     """
     cmd = ["claude", "-p", prompt,
@@ -230,8 +232,19 @@ def run_once(prompt, skill, cwd, timeout=RUN_TIMEOUT_S):
         proc = subprocess.run(
             cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
             stdin=subprocess.DEVNULL)  # no stdin: skip the CLI's 3s stdin wait
-    except subprocess.TimeoutExpired:
-        return False, "timeout", "timed out after %ds (counted as no-fire)" % timeout
+    except subprocess.TimeoutExpired as exc:
+        # A timed-out session may already have fired: the partial stream
+        # captured up to the kill is evidence, not garbage. Discarding it
+        # turned a real +9s fire into a QUARANTINE on 2026-07-14 — see
+        # docs/findings/2026-07-14-eval-timeout-artifact.md (project repo).
+        partial = exc.stdout
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", errors="replace")
+        if partial:
+            fired, mode = detect_fire(partial, skill)
+            if fired:
+                return True, mode, "fired before timeout at %ds (partial stream)" % timeout
+        return False, "timeout", "timed out after %ds, no fire in partial stream" % timeout
     except FileNotFoundError:
         return False, "error", "claude CLI not found on PATH"
     fired, mode = detect_fire(proc.stdout, skill)
