@@ -6,3 +6,4 @@ New files in additive paths (new skill dirs, tools/, docs/doctrine/) need no row
 | Date | File | Why |
 |------|------|-----|
 | 2026-07-14 | UPSTREAM.md, MODS.md | governance scaffolding (new files, listed for completeness) |
+| 2026-07-14 | .claude-plugin/plugin.json, .claude-plugin/marketplace.json | version bumps via tools/ship.sh (standing entry) |
