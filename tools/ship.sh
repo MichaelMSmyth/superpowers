@@ -118,6 +118,12 @@ prune_cache_to_governed() {
   while IFS= read -r rel; do
     [ -n "$rel" ] && governed["$rel"]=1
   done < <(git -C "$clone" ls-tree -r HEAD --name-only)
+  # SAFETY: an empty governed set (a git failure) would mark EVERY cache file as
+  # non-governed and rm the whole cache. Refuse to prune against an empty allowlist.
+  if [ "${#governed[@]}" -eq 0 ]; then
+    echo "prune: governed set empty (git ls-tree returned nothing) — skipping prune (safety)" >&2
+    return 0
+  fi
   local pruned=0 f
   while IFS= read -r -d '' f; do
     rel="${f#"${TARGET}/"}"
