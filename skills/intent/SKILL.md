@@ -40,30 +40,66 @@ When another skill owns the moment instead:
 
 ## The spread protocol
 
-Five moves, in order. This is the standard for a sound intake.
+Six moves, in order. This is the standard for a sound intake.
 
-1. **Restate the pointer.** Give the direction back in one sentence — "You're
-   pointing at X." This confirms you caught the vector before you spend effort
-   spreading around it; a wrong restatement is cheap to fix now and expensive later.
+1. **Restate the pointer — and name the problem you believe it serves.** Give the
+   direction back in one sentence, then your problem hypothesis in a second: "You're
+   pointing at X — *and the problem I believe it serves is Y*." The restatement
+   confirms you caught the vector; the problem clause lets them discriminate on your
+   framing as cheaply as on your wording. A wrong Y is cheap to correct now and
+   expensive once the spec is built around it.
 
-2. **Spread candidates that differ along your least-sure axis.** Offer 2–4
-   articulations that genuinely disagree where you are most uncertain — distinct
-   readings, not four phrasings of one guess. Width follows the task tier: a light
-   intake spreads 2 candidates; a full intake spreads 3–4 and brackets — bracket by
-   overshooting the pointer in both directions, one candidate past it each way, so
-   their real target sits between two references they can compare against.
+2. **Diverge on the goal — silently — before you spread.** Generate 2–3 divergent
+   readings of the underlying GOAL, not of the wording, and see where they land. If
+   they would lead to materially the same work, the goal has converged: no
+   problem-question reaches your human. If they diverge, that divergence is the frame
+   axis the spread must bracket. Run this check AFTER you have explored context, never
+   before — loading context measurably suppresses a model's instinct to clarify (the
+   2026-07-15 design-question research finding), so it is an explicit step that
+   context-loading cannot silently skip. Anything you can settle from evidence, settle
+   here; it never becomes a question.
 
-3. **Read their discrimination as data.** "Warmer," "colder," "that word is wrong"
+3. **Spread on two levels — frame first, then axis.** A spread that varies only the
+   wording is one guess in four coats: candidates drawn from a single reading share
+   its priors, differing at the content level while agreeing at the frame level.
+   Diversify the frame before the phrasing.
+   - **Level 1 — frame diversity.** At a full intake, draw candidates from named
+     registers, labeled when you present them: *faithful* (the best reading of the
+     pointer), *canonical* (what the literature or prior art would do), *taste* (what
+     you would build knowing the whole portfolio), *leftfield* (deliberately outside
+     your own basin). Register diversity is the generative adjoint of
+     `adversarial-review`'s named disjoint lenses — different lenses aimed at proposing
+     rather than refuting. Each frame candidate names the work it implies in one
+     clause — "if it's P1, we'd end up building …"; a reading carried with its
+     consequence beats a bare clarifying question.
+   - **Level 2 — least-sure axis.** Within the winning frame, converge by offering 2–4
+     articulations that genuinely disagree where you are most uncertain — distinct
+     readings, not four phrasings of one guess. Bracket by overshooting the pointer in
+     both directions, one candidate past it each way, so their real target sits between
+     two references they can compare against.
+
+   Every spread carries the labeled *leftfield* candidate or an explicit "none of
+   these — it's something else" escape: a closed option set is itself a leading
+   question (Loftus — phrasing implants the answer), and a leftfield reading with real
+   content makes the escape cheap to recognize instead of forcing them to articulate
+   the alternative. Every question you do surface names the one fork it discriminates
+   and aims at the highest-uncertainty fork only. Tier scaling: T1 spreads 2 —
+   *faithful* plus the strongest rival frame; T2 spreads the full register set. The
+   registers are a diversity floor, not a ritual — never a form.
+
+4. **Read their discrimination as data.** "Warmer," "colder," "that word is wrong"
    are measurements of the target's location. You steer by them: warmer means step
    further that way, colder means that axis was wrong. Their reaction is signal about
    where the target is, and you move the articulation toward it — it is data, not a
    verdict to argue with.
 
-4. **Iterate until they say it is right.** Re-spread, narrower each round, converging
+5. **Iterate until they say it is right.** Re-spread, narrower each round, converging
    on the reading they recognize. The loop closes when they confirm the articulation
-   lands — not when you run out of candidates or patience.
+   lands — not when you run out of candidates or patience. Stop sooner than that when
+   the next answer would not change what gets specced: a settled spec is the real
+   terminator, and their recognition is only its usual signal.
 
-5. **Ratify explicitly.** Ratification is a spoken act: the word "ratify," or an
+6. **Ratify explicitly.** Ratification is a spoken act: the word "ratify," or an
    unmistakable equivalent, from them. Absent that word, the intent stays a
    candidate — enthusiasm, "yeah, that's cool," and silence are readings-in-progress,
    not ratification. When the articulation looks right, ask for the word.
@@ -126,3 +162,6 @@ not a reason to proceed.
 | "They're clearly excited — ratification is implied by their enthusiasm." | It is not. Enthusiasm is not the word. Ask for "ratify" or an unmistakable equivalent before treating the intent as settled. |
 | "I basically know what they mean; I'll skip the restate." | The restate is the cheapest error-check you have. Skipping it spreads effort around a vector you never confirmed. |
 | "My articulation was good — I'll talk them out of 'colder.'" | "Colder" is a measurement, not a challenge. Arguing discards the one signal only they can produce. Move the articulation; do not defend it. |
+| "My candidates all felt different, so the spread is diverse." | Different content is not a different frame. If every candidate came from one reading of the goal, they are four phrasings of one guess — did any come from outside your basin? Draw the next from a different register. |
+| "The option set covers the possibilities, so no escape is needed." | A closed set is itself a leading question — it implants its own frame. Carry the labeled leftfield candidate or an explicit "none of these — it's something else." |
+| "One more question will nail it." | Would the answer change what gets specced? If not, the question is bikeshedding. Stop asking; spec what is already pinned. |
