@@ -325,7 +325,21 @@ else
   echo "Step 6  no stale mod cache dirs to prune"
 fi
 
-# --- step 7 (receipt) ------------------------------------------------------
+# --- step 7 (F0 integrity verdict — activation ratified "both", 2026-07-15) --
+# Run the cache-integrity sweep at the exact seam where a fresh cache is born, so
+# every ship receipt carries an attestation of what was actually installed.
+# REPORT-ONLY: the ship is already complete (pushed + installed + pruned) — a bad
+# verdict must inform, never un-ship, so rc is captured rather than propagated
+# past set -e. Kill switch lives in the verifier (SUPERPOWERS_INTEGRITY_GUARD=0).
+INTEGRITY_RC=0
+INTEGRITY_OUT="$("$SCRIPT_DIR/verify-cache-integrity.sh" 2>&1)" || INTEGRITY_RC=$?
+INTEGRITY_LINE="${INTEGRITY_OUT//$'\n'/; }"
+if [ "$INTEGRITY_RC" -ne 0 ]; then
+  INTEGRITY_LINE="${INTEGRITY_LINE} [rc=${INTEGRITY_RC} — review before trusting the install]"
+fi
+echo "Step 7  cache-integrity verdict: ${INTEGRITY_LINE}"
+
+# --- step 8 (receipt) ------------------------------------------------------
 echo ""
 echo "=== SHIP RECEIPT ==="
 echo "  version:    ${OLD_VER} -> ${NEW_VER}"
@@ -337,5 +351,6 @@ else
   echo "  pruned:     (none)"
 fi
 echo "  cache:      ${PRUNE_LINE}"
+echo "  integrity:  ${INTEGRITY_LINE}"
 echo "  next step:  restart session to load ${NEW_VER}"
 echo "===================="
