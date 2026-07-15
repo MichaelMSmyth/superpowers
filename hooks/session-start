@@ -25,15 +25,21 @@ fi
 # instruction. So we embed only a CANONICAL, ALLOWLISTED mapping: after the same
 # control-byte/UTF-8 sanitize (LC_ALL=C keeps tr byte-wise so invalid UTF-8 can't
 # abort it; iconv -c drops invalid UTF-8 that would otherwise break our JSON),
-# python3 parses the JSON and keeps ONLY entries whose KEY matches ^[A-Za-z0-9_-]+$
-# AND whose VALUE is a string matching ^[A-Za-z0-9._:-]+$ (a bare model token) or
-# is exactly "inherit"/"omit". Survivors are re-emitted as compact, sorted,
-# canonical JSON; everything else is dropped SILENTLY. If the file is malformed,
-# python3 is absent, or NO entry survives, the mapping is empty and the
-# <model-routing-active> block is omitted entirely — the safe, prose-free default,
-# byte-identical to the no-routing path. The instructional text around
-# ${routing_mapping} is OURS (trusted); only that one substitution is attacker-
-# influenced, and it can now only ever be canonical key/token pairs.
+# python3 parses the JSON and keeps ONLY entries whose KEY is a known tier
+# (mechanical/standard/frontier) AND whose VALUE fullmatches [A-Za-z0-9._:-]+ (a
+# bare, whitespace-free model token — fullmatch, so a trailing "\n" can't slip past
+# what used to be a "$" anchor) or is exactly "inherit"/"omit". Survivors are
+# re-emitted as compact, sorted, canonical JSON; everything else is dropped
+# SILENTLY. If the file is malformed, python3 is absent, or NO entry survives, the
+# mapping is empty and the <model-routing-active> block is omitted entirely — the
+# safe, prose-free default, byte-identical to the no-routing path. The instructional
+# text around ${routing_mapping} is OURS (trusted); only that one substitution is
+# attacker-influenced. This allowlist NARROWS the injection surface, it does not
+# eliminate it: only known-tier keys mapping to bare whitespace-free tokens survive,
+# which removes the fluent-prose injection vector (the real risk) AND the attacker-
+# chosen-key vector. It does NOT kill all residual — a delimiter-joined bare token
+# (e.g. "IMPORTANT::do:x") still passes and lands in a JSON value slot, where a model
+# is unlikely to read it as instruction.
 routing_message=""
 routing_file="${PWD}/docs/superpowers/model-routing.json"
 routing_label="docs/superpowers/model-routing.json"
@@ -53,11 +59,11 @@ except Exception:
     sys.exit(0)
 if not isinstance(d,dict):
     sys.exit(0)
-kre=re.compile(r"^[A-Za-z0-9_-]+$")
-vre=re.compile(r"^[A-Za-z0-9._:-]+$")
+tiers=("mechanical","standard","frontier")
+vre=re.compile(r"[A-Za-z0-9._:-]+")
 out={}
 for k,v in d.items():
-    if isinstance(k,str) and isinstance(v,str) and kre.match(k) and (vre.match(v) or v in ("inherit","omit")):
+    if isinstance(k,str) and isinstance(v,str) and k in tiers and (vre.fullmatch(v) or v in ("inherit","omit")):
         out[k]=v
 if out:
     sys.stdout.write(json.dumps(out,sort_keys=True,separators=(",",":")))
