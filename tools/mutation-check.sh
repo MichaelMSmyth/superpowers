@@ -45,9 +45,11 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# Cached mutmut venv lives in the REAL repo's tools/ (gitignored .mutenv), reused
-# across runs — it is never mutated; only the scratch copy is.
-VENV="$SCRIPT_DIR/.mutenv"
+# Cached mutmut venv lives OUTSIDE the clone (~/.cache/superpower-mod/), reused across
+# runs — it is never mutated (only the scratch copy is) and never swept into the
+# installed plugin cache (the install is a full recursive copy of the worktree —
+# docs/findings/2026-07-15-plugin-install-copies-worktree.md, PROJECT repo).
+VENV="${XDG_CACHE_HOME:-$HOME/.cache}/superpower-mod/mutenv"
 
 # --- defaults / arg parse --------------------------------------------------
 REPO="$REPO_ROOT"
@@ -76,7 +78,7 @@ FLAGS:
                        Omitted (default): exit 0 always — this is a reporter.
   --help               Show this help and exit 0.
 
-REQUIRES: python3.12 on PATH; installs mutmut<3 into a cached venv (tools/.mutenv).
+REQUIRES: python3.12 on PATH; installs mutmut<3 into a cached venv (~/.cache/superpower-mod/mutenv).
 See the header comment and docs/findings/2026-07-14-mutation-fliptest.md.
 EOF
 }
@@ -131,6 +133,7 @@ fi
 # --- REFUSAL 2: mutmut<3 venv pin ------------------------------------------
 if [ ! -x "$VENV/bin/mutmut" ]; then
   echo "mutation-check: bootstrapping cached mutmut<3 venv at $VENV ..." >&2
+  mkdir -p "$(dirname "$VENV")"
   if ! python3.12 -m venv "$VENV"; then
     echo "ERROR: could not create the python3.12 venv at $VENV." >&2
     echo "  Canonical form: ensure python3.12 has the 'venv' module ('sudo apt install python3.12-venv') and $VENV is writable." >&2

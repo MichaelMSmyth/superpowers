@@ -1,7 +1,6 @@
 # Python bytecode from the tools/ test suite (test_drift_report.py imports drift_report).
 __pycache__/
 *.pyc
-# Cached coverage venv bootstrapped by tools/coverage-floor.sh (holds coverage + its data file).
-.covenv/
-# Cached mutmut<3 venv bootstrapped by tools/mutation-check.sh (phase-close mutation audit).
-.mutenv/
+# The coverage (.covenv) and mutmut<3 (.mutenv) venvs now live OUTSIDE the clone at
+# ~/.cache/superpower-mod/ (F0: keep dev artifacts out of the installed plugin cache,
+# which is a full recursive copy of the working tree). No in-repo ignore entries needed.

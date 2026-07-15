@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tools/ship.sh [--dry-run | --check-tree] — one-command edit-test loop for the
-# superpowers-extended-cc fork.
+# tools/ship.sh [--dry-run | --check-tree | --prune-check <cache_dir> <clone>] —
+# one-command edit-test loop for the superpowers-extended-cc fork.
 #
 # Bumps the plugin's -mod.N version, commits + pushes, re-reads the local directory
 # marketplace, re-installs the plugin, verifies the installed gitCommitSha == HEAD,
@@ -23,6 +23,17 @@
 #   --check-tree is a test seam: it runs ONLY that guard against the git repo at CWD
 #   and exits (no bump, no commit, no push, no install, no network) — it is exercised
 #   by tools/tests/test_ship_tree_guard.sh and never used by a real ship.
+#
+# F0 HARDENING (2026-07-15): the plugin install is a FULL recursive copy of the clone's
+#   working tree — it respects NO .gitignore/manifest exclusion (measured + doc-confirmed:
+#   docs/findings/2026-07-15-plugin-install-copies-worktree.md, PROJECT repo one level up).
+#   So after the SHA-parity verify, prune_cache_to_governed() removes every file in the
+#   freshly-installed cache version dir whose cache-relative path is NOT in the shipped
+#   governed tree (git ls-tree -r HEAD), leaving cache == git-tracked set exactly. It NEVER
+#   removes a governed file and operates only within the resolved cache version dir.
+#   --prune-check <cache_version_dir> <clone_root> is a test seam: it runs ONLY that prune
+#   against throwaway dirs and exits (no bump/commit/push/install/network) — exercised by
+#   tools/tests/test_ship_cache_prune.sh and never used by a real ship.
 #
 # GATE CONTRACT for every error path: on failure (1) do what's safely inferable or
 # nothing, (2) print the canonical correct command/form, (3) state what was averted.
@@ -81,6 +92,47 @@ ship_tree_refuse() {
   echo "  Averted: an unreviewed dirty file pushed to public origin and installed as executing code." >&2
 }
 
+# --- installed-cache governed prune (F0) -----------------------------------
+# prune_cache_to_governed <cache_version_dir> <clone_root> — remove every file under
+# the freshly-installed cache version dir whose cache-relative path is NOT in the shipped
+# governed set (git ls-tree -r HEAD of the clone), then drop now-empty directories, and
+# echo a one-line summary "pruned N non-governed file(s) from the installed cache".
+# The plugin install is a full recursive copy of the working tree (no ignore mechanism —
+# see docs/findings/2026-07-15-plugin-install-copies-worktree.md), so this leaves the
+# installed cache byte-equal to the git-tracked tree. SAFETY (all mandatory):
+#   * NEVER removes a file whose relpath IS in the governed allowlist (checked per file);
+#   * guards the target with ${TARGET:?} so an empty var can never rm outside it;
+#   * operates ONLY within the resolved (absolute) cache version dir;
+#   * empty/nonexistent target → no-op, rc 0, no error (never touches anything).
+# Always returns 0 (a reporter, like the other organs); pure to its two path arguments.
+prune_cache_to_governed() {
+  local target="$1" clone="$2"
+  if [ -z "$target" ] || [ ! -d "$target" ]; then
+    echo "prune: no cache dir at '${target:-<empty>}' — nothing to prune (0 files)"
+    return 0
+  fi
+  local TARGET; TARGET="$(cd "$target" && pwd)"    # resolve to an absolute path
+  # governed allowlist: cache-relative paths of the shipped tree, as a set.
+  local -A governed=()
+  local rel
+  while IFS= read -r rel; do
+    [ -n "$rel" ] && governed["$rel"]=1
+  done < <(git -C "$clone" ls-tree -r HEAD --name-only)
+  local pruned=0 f
+  while IFS= read -r -d '' f; do
+    rel="${f#"${TARGET}/"}"
+    if [ -n "${governed[$rel]:-}" ]; then
+      continue                                     # SAFETY: never remove a governed file
+    fi
+    rm -f -- "${TARGET:?}/$rel"
+    pruned=$((pruned + 1))
+  done < <(find "${TARGET:?}" -type f -print0)
+  # drop now-empty directories (deepest first; never the target root itself).
+  find "${TARGET:?}" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  echo "pruned ${pruned} non-governed file(s) from the installed cache"
+  return 0
+}
+
 # --- arg parse -------------------------------------------------------------
 DRY_RUN=0
 case "${1:-}" in
@@ -102,10 +154,23 @@ case "${1:-}" in
       exit 2
     fi
     ;;
+  --prune-check)
+    # F0 test seam: run ONLY prune_cache_to_governed against the given cache version
+    # dir + clone root, then exit — no bump/commit/push/install/network. Exercised by
+    # tools/tests/test_ship_cache_prune.sh; never used by a real ship.
+    if [ "$#" -lt 3 ]; then
+      echo "ERROR: --prune-check requires <cache_version_dir> <clone_root>." >&2
+      echo "  Correct form: tools/ship.sh --prune-check <cache_version_dir> <clone_root>" >&2
+      echo "  Averted: running the installed-cache prune with missing arguments." >&2
+      exit 2
+    fi
+    prune_cache_to_governed "$2" "$3"
+    exit 0
+    ;;
   "")        ;;
   *)
     echo "ERROR: unknown argument '$1'." >&2
-    echo "  Correct form: tools/ship.sh [--dry-run | --check-tree]" >&2
+    echo "  Correct form: tools/ship.sh [--dry-run | --check-tree | --prune-check <cache_dir> <clone>]" >&2
     echo "  Averted: running an unrecognised flag as if it were a no-op." >&2
     exit 2
     ;;
@@ -223,6 +288,13 @@ if [ "$INSTALLED_SHA" != "$HEAD_SHA" ]; then
 fi
 echo "Step 5  installed gitCommitSha == HEAD (${HEAD_SHA})  ✓"
 
+# --- step 5b (prune the freshly-installed cache to the governed set, F0) ----
+# The install copied the WHOLE working tree; remove any file in the new version's
+# cache dir that is not in the shipped tree, so cache == git-tracked set exactly.
+CACHE_VERSION_DIR="$CACHE_PARENT/$NEW_VER"
+PRUNE_LINE="$(prune_cache_to_governed "$CACHE_VERSION_DIR" "$REPO_ROOT")"
+echo "Step 5b installed-cache prune: ${PRUNE_LINE}"
+
 # --- step 6 (prune stale mod cache dirs) -----------------------------------
 DIRS=()
 if [ -d "$CACHE_PARENT" ]; then
@@ -258,5 +330,6 @@ if [ "${#PRUNED[@]}" -gt 0 ]; then
 else
   echo "  pruned:     (none)"
 fi
+echo "  cache:      ${PRUNE_LINE}"
 echo "  next step:  restart session to load ${NEW_VER}"
 echo "===================="

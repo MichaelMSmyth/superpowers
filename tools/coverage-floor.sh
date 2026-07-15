@@ -7,7 +7,8 @@
 # model-free; the mutation audit (Task 4 / tools/mutation-check.sh) is the
 # complementary layer that scores assertion QUALITY on the covered lines.
 #
-# It bootstraps a cached venv (tools/.covenv, gitignored) holding `coverage`,
+# It bootstraps a cached venv (~/.cache/superpower-mod/covenv, OUTSIDE the clone so
+# it is never swept into the installed plugin cache) holding `coverage`,
 # runs the tools/tests suite under measurement, prints the per-module report,
 # then enforces a RATCHETED floor on the TOTAL. Per the enforcement ladder this
 # is a rung-3/4 organ: it reports the state of play and returns an honest exit
@@ -20,13 +21,17 @@ FLOOR=88
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-VENV="$SCRIPT_DIR/.covenv"
-# Keep coverage's data file inside the gitignored venv so no stray .coverage
+# Cached venv lives OUTSIDE the clone (~/.cache/superpower-mod/) so it is never swept
+# into the installed plugin cache — the plugin install is a full recursive copy of the
+# working tree (docs/findings/2026-07-15-plugin-install-copies-worktree.md, PROJECT repo).
+VENV="${XDG_CACHE_HOME:-$HOME/.cache}/superpower-mod/covenv"
+# Keep coverage's data file inside the cached venv so no stray .coverage
 # lands in the repo root (both `run` and `report` honour COVERAGE_FILE).
 export COVERAGE_FILE="$VENV/.coverage"
 
 # --- bootstrap the coverage venv if absent ---------------------------------
 if [ ! -x "$VENV/bin/coverage" ]; then
+  mkdir -p "$(dirname "$VENV")"
   python3 -m venv "$VENV" || {
     echo "coverage-floor: could not create venv at $VENV" >&2
     exit 2
