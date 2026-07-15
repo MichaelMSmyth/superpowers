@@ -291,8 +291,11 @@ DEFAULT_SPEC_DIRS = (os.path.join("docs", "specs"),
 _TABLE_SEP_CELL_RE = re.compile(r"^:?-+:?$")
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\([^)]+\)")
 # Cell values that count as unfilled — the assay demands real justification,
-# not a dash or a "TBD" standing in for one.
-_PLACEHOLDER_CELLS = frozenset({"-", "–", "—", "tbd", "?"})
+# not a dash or a "TBD" standing in for one. Four near-identical Unicode dashes
+# are all treated as placeholders: U+2013 en, U+2014 em, U+2212 minus, U+2015
+# horizontal bar (each distinct from the ASCII hyphen "-" but visually a dash).
+_PLACEHOLDER_CELLS = frozenset(
+    {"-", "–", "—", "−", "―", "tbd", "?"})
 # Provenance substrings whose rows the assay scrutinises (derived is exempt).
 _ASSAY_PROVENANCE = ("imported", "assumed")
 
@@ -329,8 +332,20 @@ def _iter_md_tables(text):
     follow the header)."""
     lines = text.splitlines()
     i, n = 0, len(lines)
+    in_fence = False
     while i < n:
         line = lines[i]
+        stripped = line.strip()
+        # Fence tracking: skip tables inside ```/~~~ blocks — they're doc
+        # examples (the brainstorming skill documents this table format → a live
+        # false positive). Toggle on any fence line, ignore everything within.
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            i += 1
+            continue
+        if in_fence:
+            i += 1
+            continue
         if ("|" in line and line.strip() and i + 1 < n and "|" in lines[i + 1]
                 and _is_separator_row(_split_table_row(lines[i + 1]))):
             header = _split_table_row(line)
@@ -440,7 +455,15 @@ def scan_specs(dirs):
     for d in dirs:
         ad = os.path.abspath(d)
         if not os.path.isdir(ad):
-            continue  # non-existent spec dir: silent skip
+            # A path that EXISTS but isn't a directory (a file) is almost always
+            # a mistake: --specs foo.md lints nothing yet reports 0 findings,
+            # reading as "clean". Warn to stderr so the false confidence can't
+            # hide. A genuinely absent dir (older specs predate the convention)
+            # stays a silent skip.
+            if os.path.exists(ad):
+                print("doctor: --specs %s is not a directory; skipped" % d,
+                      file=sys.stderr)
+            continue
         for dirpath, dirnames, filenames in os.walk(ad):
             dirnames.sort()
             for fn in filenames:
@@ -483,6 +506,15 @@ def main(argv=None):
         findings = findings + scan_specs(spec_dirs)
     for f in findings:
         print(_format(f))
+
+    if args.specs is not None:
+        # Honest labeling: a quiet D7 is a FORM pass, not a substance pass. The
+        # lint checks only that cells are filled and evidence carries a link/path
+        # — it cannot judge whether the justification is true. Say so every specs
+        # run, so a green D7 is never misread as "assay done".
+        print("D7 NOTE: spec assay lint is a FORM check (filled cells + a "
+              "link/path present) — it does not verify substance; a quiet D7 is "
+              "not an assay done.")
 
     n_err = sum(1 for f in findings if f.severity == "ERROR")
     n_warn = sum(1 for f in findings if f.severity == "WARN")

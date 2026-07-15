@@ -92,13 +92,15 @@ class TestSpecAssay(unittest.TestCase):
                 "| Apple | Red |\n")
         self.assertEqual(self._d7(body), [])
 
-    # (6) --specs pointed at a nonexistent dir -> no crash, silent skip
+    # (6) --specs pointed at a nonexistent dir -> no crash, silent skip.
+    # The D7 NOTE still prints (specs mode ran); only D7 *findings* are absent.
     def test_nonexistent_dir_no_crash(self):
         self.assertEqual(doctor.scan_specs(["/no/such/dir/really/xyz"]), [])
         rc, out = _run_main(["--specs", "/no/such/dir/really/xyz",
                              "--root", REPO])
         self.assertEqual(rc, 0)
-        self.assertNotIn("D7", out)
+        self.assertNotIn("D7 WARN", out)
+        self.assertIn("D7 NOTE", out)
 
     # Extra: evidence cell with plain prose (no link/path) -> flagged 'no link'
     def test_imported_evidence_no_link_flagged(self):
@@ -124,6 +126,43 @@ class TestSpecAssay(unittest.TestCase):
         self.assertEqual(len(d7), 1)
         self.assertIn("inversion", d7[0].message)
 
+    # Fence tracking (the pair): the SAME table with a placeholder inversion cell
+    # is exempt inside a ``` fence (it's a documentation example — the
+    # brainstorming skill instructs authors to write this exact format) but
+    # flagged unfenced. The pair isolates fence tracking from every other rule.
+    def test_fence_tracking_example_exempt_but_real_linted(self):
+        table = HEADER + ("| Use Redis | assumed | fast cache | infra cost |   "
+                          "| [bench](docs/bench.md) |\n")
+        fenced = "# Documented example\n\n```\n" + table + "```\n"
+        self.assertEqual(self._d7(fenced, name="fenced.md"), [])
+        d7 = self._d7(table, name="real.md")
+        self.assertEqual(len(d7), 1)
+        self.assertIn("inversion", d7[0].message)
+
+    # A cell holding only U+2212 (minus sign) is a placeholder, not content.
+    def test_unicode_minus_inversion_flagged(self):
+        table = HEADER + ("| Use Redis | assumed | fast cache | infra cost "
+                          "| − | [bench](docs/bench.md) |\n")
+        d7 = self._d7(table)
+        self.assertEqual(len(d7), 1)
+        self.assertIn("inversion", d7[0].message)
+
+    # --specs pointed at a FILE (not a dir): no findings, and a stderr note so
+    # the 0-findings result is never misread as "clean".
+    def test_specs_file_path_warns_stderr_and_no_findings(self):
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        fpath = os.path.join(tmp.name, "notadir.md")
+        with open(fpath, "w", encoding="utf-8") as fh:
+            fh.write("# a file, not a directory\n")
+        errbuf = io.StringIO()
+        with contextlib.redirect_stderr(errbuf):
+            findings = doctor.scan_specs([fpath])
+        self.assertEqual(findings, [])
+        err = errbuf.getvalue()
+        self.assertIn("doctor: --specs", err)
+        self.assertIn("is not a directory", err)
+        self.assertIn("notadir.md", err)
+
 
 class TestSpecAssayIntegration(unittest.TestCase):
     def test_main_specs_flag_emits_warn_never_fails(self):
@@ -134,6 +173,25 @@ class TestSpecAssayIntegration(unittest.TestCase):
         rc, out = _run_main(["--specs", d, "--strict", "--root", REPO])
         self.assertEqual(rc, 0)
         self.assertIn("D7 WARN", out)
+
+    # Honest labeling: specs mode always prints the D7 NOTE (form-check caveat).
+    def test_specs_mode_prints_d7_note(self):
+        table = HEADER + ("| Adopt X | imported | reuse | lock-in | swap to Y "
+                          "| [r](docs/x.md) |\n")
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        d, _ = _write_spec(tmp.name, "spec.md", table)
+        rc, out = _run_main(["--specs", d, "--root", REPO])
+        self.assertEqual(rc, 0)
+        self.assertIn("D7 NOTE", out)
+        self.assertIn("FORM check", out)
+        self.assertIn("does not verify substance", out)
+
+    # ...and no-specs mode must NOT print it (nothing about D7 at all).
+    def test_no_specs_mode_omits_d7_note(self):
+        rc, out = _run_main(["--root", REPO])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("D7 NOTE", out)
+        self.assertNotIn("D7", out)
 
 
 class TestBaselineUnchanged(unittest.TestCase):

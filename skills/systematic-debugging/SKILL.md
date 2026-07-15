@@ -123,8 +123,9 @@ You MUST complete each phase before proceeding to the next.
 
 A failed run is evidence, not a coin to flip again. Before ANY re-run, restart, or
 retry with a relaxed parameter — longer timeout, bigger limit, cache clear, reinstall
-— answer three questions. This is Phase 1 applied to the retry reflex: a re-run that
-skips it is a fix without investigation, and the Iron Law forbids that.
+— answer three questions. This is Phase 1 applied to the retry reflex: a re-run offered
+*as the fix for an unexplained failure* — one that skips these questions — is a fix
+without investigation, and the Iron Law forbids that.
 
 1. **What did the failed run leave behind?** Enumerate the artifacts FIRST — logs,
    transcripts, partial output, exit codes, on-disk state. Evidence already paid for
@@ -136,6 +137,12 @@ skips it is a fix without investigation, and the Iron Law forbids that.
 3. **What would the retry destroy or fail to explain?** A retry that "fixes" an
    unexplained failure has hidden a bug, not fixed one. An anomaly is signal until
    explained.
+
+**Carve-out — the recorded transient.** A failure that matches a RECORDED transient
+pattern — a rate-limit 429 answered by retry-with-backoff, a documented flaky-infra
+signature — may retry immediately. The three questions still get answered, but in
+seconds and from the recorded pattern, not a fresh investigation. The gate targets the
+UNEXPLAINED failure: a retry that "fixes" one is still two anomalies, not zero.
 
 **Worked example** — one level up from this fork, in the project repo at
 `docs/findings/2026-07-14-eval-timeout-artifact.md`. A headless eval subagent hit its
