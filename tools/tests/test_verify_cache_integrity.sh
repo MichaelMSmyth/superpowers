@@ -41,6 +41,11 @@ setup() {
   printf '# reference body\n'         > "$CLONE/skills/using-superpowers/references/r.md"
   printf '# command c\n'              > "$CLONE/commands/c.md"
   printf '#!/bin/sh\necho start\n'    > "$CLONE/skills/brainstorming/scripts/start-server.sh"
+  # A GOVERNED SYMLINK (git mode 120000, blob content = the literal target string, no
+  # trailing newline) — the real tree ships AGENTS.md -> CLAUDE.md. `git archive` below
+  # reproduces it as a real symlink in the cache, exactly like the live install.
+  printf '# claude md body\n'         > "$CLONE/CLAUDE.md"
+  ln -s CLAUDE.md "$CLONE/AGENTS.md"
   git -C "$CLONE" add -A
   git -C "$CLONE" commit -q -m "chore: ship ${VER}"
   # Reproduce the shipped tree byte-for-byte into the cache dir.
@@ -120,6 +125,63 @@ setup
 printf '# TAMPERED reference\n' > "$CACHEP/$VER/skills/using-superpowers/references/r.md"
 run_verify "$CLONE" "$CACHEP"
 t "4c-fulltree-nonskill-modified" 1 "skills/using-superpowers/references/r.md (modified)" - nonempty
+
+# --- F0 SYMLINK REGRESSION SUITE (2026-07-15) ---------------------------------------------
+# The governed tree ships AGENTS.md -> CLAUDE.md as a real symlink (git mode 120000, blob
+# content = the target string). The old `find -type f` walk skipped it entirely, crying a
+# false DIVERGED "(missing)" against a byte-correct mod.16 cache. These lock the fix:
+# symlinks are enumerated, compared by readlink-vs-blob, type-checked before any hash, and
+# an injected link can never hide behind the *.pyc bytecode exclusion.
+
+# 4d. REGRESSION: governed symlink present with the correct target → VERIFIED, no false
+#     "(missing)". This is the exact AGENTS.md case that was mis-reported. `find -type f`
+#     never listed it; `find ( -type f -o -type l )` does, and readlink == blob → clean.
+setup
+run_verify "$CLONE" "$CACHEP"
+t "4d-symlink-correct-verified" 0 "VERIFIED ${VER}" "AGENTS.md" empty
+
+# 4e. Governed symlink ABSENT from the cache → DIVERGED (missing). It is a shipped path,
+#     so its absence must be flagged just like any missing regular file.
+setup
+rm "$CACHEP/$VER/AGENTS.md"
+run_verify "$CLONE" "$CACHEP"
+t "4e-symlink-missing" 1 "AGENTS.md (missing)" - nonempty
+
+# 4f. Governed symlink present but REPOINTED at a different target string → DIVERGED
+#     (modified). Compared by target string (readlink vs blob), not by dereferenced bytes.
+setup
+rm "$CACHEP/$VER/AGENTS.md"
+ln -s ELSEWHERE.md "$CACHEP/$VER/AGENTS.md"
+run_verify "$CLONE" "$CACHEP"
+t "4f-symlink-retargeted-modified" 1 "AGENTS.md (modified)" - nonempty
+
+# 4g. TYPE-CHANGE, content-identical: a shipped REGULAR file replaced in the cache by a
+#     SYMLINK whose target holds byte-identical content → DIVERGED (type-changed). This is
+#     the load-bearing proof that the type check runs BEFORE hashing: sha256sum follows the
+#     link and would read identical bytes → a naive hash compare would wrongly PASS. The
+#     target lives outside the cache dir so it adds no spurious "(extra)" entry.
+setup
+DECOY="$(mktemp)"; printf 'echo session-start\n' > "$DECOY"   # == shipped hooks/session-start bytes
+rm "$CACHEP/$VER/hooks/session-start"
+ln -s "$DECOY" "$CACHEP/$VER/hooks/session-start"
+run_verify "$CLONE" "$CACHEP"
+t "4g-file-to-symlink-type-changed" 1 "hooks/session-start (type-changed)" - nonempty
+rm -f "$DECOY"
+
+# 4h. Injected EXTRA symlink (no shipped counterpart) → DIVERGED (extra). Enumerating links
+#     is what closes this blind spot; `find -type f` would never have seen it.
+setup
+ln -s /etc/passwd "$CACHEP/$VER/hooks/evil-link"
+run_verify "$CLONE" "$CACHEP"
+t "4h-injected-symlink-extra" 1 "hooks/evil-link (extra)" - nonempty
+
+# 4i. Injected extra symlink NAMED like bytecode (evil.pyc) → still DIVERGED (extra). The
+#     *.pyc/*.pyo skip clears only REGULAR files; a link masquerading as bytecode is exactly
+#     what the exclusion must never wave through.
+setup
+ln -s /etc/passwd "$CACHEP/$VER/hooks/evil.pyc"
+run_verify "$CLONE" "$CACHEP"
+t "4i-symlink-named-pyc-extra" 1 "hooks/evil.pyc (extra)" "VERIFIED" nonempty
 
 # 5. COULD-NOT-VERIFY: a cache dir whose version has NO ship commit → visible, not verified.
 setup

@@ -25,13 +25,19 @@
 #   this sweep.
 #
 # SURFACES COVERED: the FULL governed tree. Every path in the shipped commit is compared,
-#   and every file in the cache dir is accounted for (modified / missing / extra). The
-#   ONLY files excluded are genuine build artifacts by EXACT extension (*.pyc / *.pyo) —
-#   never by directory subtree, so an injected NON-bytecode file under __pycache__/ (e.g.
-#   a payload .sh) IS still flagged. (Round-1 filtered to SKILL.md|*.sh and excluded the
-#   whole __pycache__/ subtree — both were findings: the first left reference bodies, .js,
-#   commands/, agents/ and manifests unattested; the second reported a __pycache__ payload
-#   as VERIFIED.)
+#   and every regular file AND SYMLINK in the cache dir is accounted for (modified /
+#   type-changed / missing / extra). Governed symlinks (git mode 120000, e.g.
+#   AGENTS.md -> CLAUDE.md, whose blob content IS the target string) are compared by
+#   readlink-vs-blob, not by hash — sha256sum follows links, so type is checked before any
+#   hash. The ONLY entries excluded are genuine build artifacts by EXACT extension
+#   (*.pyc / *.pyo) AND only when they are regular files — never by directory subtree, and
+#   never a symlink, so an injected NON-bytecode file under __pycache__/ (e.g. a payload
+#   .sh) or a link masquerading as evil.pyc IS still flagged. (Round-1 filtered to
+#   SKILL.md|*.sh and excluded the whole __pycache__/ subtree — both were findings: the
+#   first left reference bodies, .js, commands/, agents/ and manifests unattested; the
+#   second reported a __pycache__ payload as VERIFIED. The `find -type f` walk skipping
+#   symlinks was a third: it cried false DIVERGED "(missing)" on the correct AGENTS.md
+#   link, 2026-07-15.)
 #
 # RUNG 5, AND NOT REAL-TIME: this is a periodic cron sweep. A session tampered with
 #   between two sweeps runs BEFORE the next sweep catches it — that residual is
@@ -81,6 +87,16 @@ notify() { # notify <body>
 
 sha_file() { sha256sum -- "$1" 2>>"$LOG_FILE" | awk '{print $1}'; }
 sha_git()  { git -C "$CLONE_ROOT" show "$1:$2" 2>>"$LOG_FILE" | sha256sum | awk '{print $1}'; }
+
+# Symlink-target readers (governed symlinks — e.g. AGENTS.md -> CLAUDE.md — are real tree
+# entries, git mode 120000, whose BLOB CONTENT is the literal target string). The shipped
+# target is the blob itself; the cache holds a real symlink whose target is read with
+# readlink. Comparing these two STRINGS is the correct check: hashing would follow the link
+# (sha256sum dereferences) and compare the pointed-at file's bytes instead of the pointer.
+# `git show` appends exactly one trailing newline and $(...) strips trailing newlines, so
+# an unterminated blob and readlink's unterminated output compare equal symmetrically.
+link_git()  { git -C "$CLONE_ROOT" show "$1:$2" 2>>"$LOG_FILE"; }
+link_file() { readlink -- "$1" 2>>"$LOG_FILE"; }
 
 print_cron() {
   cat <<EOF
@@ -147,13 +163,19 @@ verify_dir() { # verify_dir <cache_dir>
   for h in "${!shas[@]}"; do sha="$h"; done
 
   # FULL governed-tree comparison (Fix 1). The SHIPPED side is EVERY path in the commit
-  # (no filtering to SKILL.md|*.sh); the CACHE side is EVERY file under the version dir.
+  # (no filtering to SKILL.md|*.sh); the CACHE side is EVERY file AND SYMLINK under the
+  # version dir. We carry the git MODE per path (not a bare presence flag) so the compare
+  # can dispatch on entry type: regular files hash-compare, mode-120000 symlinks compare by
+  # readlink-vs-blob (F0 symlink fix, 2026-07-15). Full `ls-tree -r` emits
+  # `<mode> <type> <objsha>\t<path>`; split on the TAB so paths with spaces stay intact,
+  # then take the mode as the first field of the metadata. Modes are non-empty, so the
+  # existing `[ -n "${ship[$p]:-}" ]` presence tests keep working unchanged.
   local -A ship=() cache=()
-  local p rel
-  while IFS= read -r p; do
+  local p rel meta
+  while IFS=$'\t' read -r meta p; do
     [ -n "$p" ] || continue
-    ship["$p"]=1
-  done < <(git -C "$CLONE_ROOT" ls-tree -r --name-only "$sha" 2>>"$LOG_FILE")
+    ship["$p"]="${meta%% *}"
+  done < <(git -C "$CLONE_ROOT" ls-tree -r "$sha" 2>>"$LOG_FILE")
 
   if [ "${#ship[@]}" -eq 0 ]; then
     printf 'COULD-NOT-VERIFY %s: shipped commit has no files to attest\n' "$version"
@@ -162,18 +184,28 @@ verify_dir() { # verify_dir <cache_dir>
     return 1
   fi
 
+  # Enumerate regular files AND symlinks. `-type f` alone SKIPS symlinks — that was the
+  # live false-positive: the governed AGENTS.md -> CLAUDE.md link was never listed, so it
+  # read as "(missing)" against a byte-correct mod.16 cache (2026-07-15). Listing links
+  # here also closes the injected-symlink blind spot: a link planted in the cache now has a
+  # cache entry to be caught as "(extra)" instead of being invisible.
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     cache["$rel"]=1
-  done < <(find "$dir" -type f -printf '%P\n' 2>>"$LOG_FILE")
+  done < <(find "$dir" \( -type f -o -type l \) -printf '%P\n' 2>>"$LOG_FILE")
 
-  # Compare the UNION. A shipped file that is byte-changed, unreadable, or missing from
-  # the cache is a divergence; a cache file with no shipped counterpart (injected) is a
-  # divergence UNLESS it is git-ignored Python bytecode by EXACT extension (*.pyc/*.pyo).
-  # NB: the exclusion is by extension, NEVER by directory subtree — a *.sh/*.py/anything
-  # non-bytecode under __pycache__/ has no shipped counterpart and IS flagged as extra.
-  # (check-ignore is deliberately NOT used: this repo's global git excludes ignore the
-  # whole __pycache__/ tree, so check-ignore would wrongly clear a __pycache__ payload.)
+  # Compare the UNION. A shipped path that is byte/target-changed, unreadable, type-changed,
+  # or missing from the cache is a divergence; a cache entry with no shipped counterpart
+  # (injected) is a divergence UNLESS it is git-ignored Python bytecode by EXACT extension
+  # (*.pyc/*.pyo). NB: the exclusion is by extension, NEVER by directory subtree — a
+  # *.sh/*.py/anything non-bytecode under __pycache__/ has no shipped counterpart and IS
+  # flagged as extra. (check-ignore is deliberately NOT used: this repo's global git
+  # excludes ignore the whole __pycache__/ tree, so check-ignore would wrongly clear a
+  # __pycache__ payload.)
+  #
+  # in_s now holds the shipped git MODE (or "" if not shipped), so the both-present branch
+  # dispatches on type: mode 120000 is a governed symlink compared by target string, any
+  # other mode is a regular file compared by content hash.
   local -a diverged=()
   local -A seen=()
   for p in "${!ship[@]}" "${!cache[@]}"; do
@@ -181,21 +213,55 @@ verify_dir() { # verify_dir <cache_dir>
     seen["$p"]=1
     local in_s="${ship[$p]:-}" in_c="${cache[$p]:-}"
     if [ -n "$in_s" ] && [ -n "$in_c" ]; then
-      local a b
-      a="$(sha_git "$sha" "$p")"
-      b="$(sha_file "$dir/$p")"
-      if [ -z "$a" ] || [ -z "$b" ]; then
-        diverged+=("$p (unreadable)")
-      elif [ "$a" != "$b" ]; then
-        diverged+=("$p (modified)")
+      if [ "$in_s" = "120000" ]; then
+        # Shipped as a symlink: the cache entry MUST be a symlink too. If it is a real file
+        # here, the type itself changed (a link swapped for its dereferenced contents, or a
+        # planted file) — flag before any target read.
+        if [ ! -L "$dir/$p" ]; then
+          diverged+=("$p (type-changed)")
+        else
+          local a b
+          a="$(link_git "$sha" "$p")"    # shipped target = blob content
+          b="$(link_file "$dir/$p")"     # cache target   = readlink
+          if [ -z "$a" ] || [ -z "$b" ]; then
+            diverged+=("$p (unreadable)")
+          elif [ "$a" != "$b" ]; then
+            diverged+=("$p (modified)")
+          fi
+        fi
+      else
+        # Shipped as a regular file. Check type BEFORE hashing: sha256sum FOLLOWS symlinks,
+        # so a link planted in place of the file and pointed at content with the right bytes
+        # would hash-match and slip through. A cache symlink where a file was shipped is a
+        # type change, full stop.
+        if [ -L "$dir/$p" ]; then
+          diverged+=("$p (type-changed)")
+        else
+          local a b
+          a="$(sha_git "$sha" "$p")"
+          b="$(sha_file "$dir/$p")"
+          if [ -z "$a" ] || [ -z "$b" ]; then
+            diverged+=("$p (unreadable)")
+          elif [ "$a" != "$b" ]; then
+            diverged+=("$p (modified)")
+          fi
+        fi
       fi
     elif [ -n "$in_s" ]; then
       diverged+=("$p (missing)")
     else
-      case "$p" in
-        *.pyc|*.pyo) : ;;   # git-ignored bytecode, never in the shipped tree — skip
-        *) diverged+=("$p (extra)") ;;
-      esac
+      # Injected cache entry (no shipped counterpart). The *.pyc/*.pyo bytecode skip applies
+      # ONLY to REGULAR files: a SYMLINK named evil.pyc is not a build artifact, it is a
+      # pointer masquerading as one, exactly what the exclusion must never clear — so any
+      # injected symlink is ALWAYS flagged extra regardless of its name.
+      if [ -L "$dir/$p" ]; then
+        diverged+=("$p (extra)")
+      else
+        case "$p" in
+          *.pyc|*.pyo) : ;;   # git-ignored bytecode, never in the shipped tree — skip
+          *) diverged+=("$p (extra)") ;;
+        esac
+      fi
     fi
   done
 
