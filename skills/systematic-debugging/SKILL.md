@@ -119,6 +119,31 @@ You MUST complete each phase before proceeding to the next.
    - Keep tracing up until you find the source
    - Fix at source, not at symptom
 
+#### Before You Re-Run: The Pre-Retry Gate
+
+A failed run is evidence, not a coin to flip again. Before ANY re-run, restart, or
+retry with a relaxed parameter — longer timeout, bigger limit, cache clear, reinstall
+— answer three questions. This is Phase 1 applied to the retry reflex: a re-run that
+skips it is a fix without investigation, and the Iron Law forbids that.
+
+1. **What did the failed run leave behind?** Enumerate the artifacts FIRST — logs,
+   transcripts, partial output, exit codes, on-disk state. Evidence already paid for
+   is read before new evidence is bought.
+2. **What hypothesis does the retry encode — stated aloud?** "Longer timeout" silently
+   asserts "the run needed more time." An action that smuggles its hypothesis can't be
+   falsified by the evidence you already hold; naming it lets the artifacts kill it in
+   seconds.
+3. **What would the retry destroy or fail to explain?** A retry that "fixes" an
+   unexplained failure has hidden a bug, not fixed one. An anomaly is signal until
+   explained.
+
+**Worked example** — one level up from this fork, in the project repo at
+`docs/findings/2026-07-14-eval-timeout-artifact.md`. A headless eval subagent hit its
+timeout wall; the instinct was "re-run with a longer timeout." Question 1 asked first:
+the killed session's transcript was already on disk, the skill fired at +9 s. Root
+cause was the harness discarding a killed subprocess's partial stdout — a re-run would
+have cost minutes, maybe passed, shrugged off as "flaky," leaving the harness bug alive.
+
 ### Phase 2: Pattern Analysis
 
 **Find the pattern before fixing:**
@@ -254,6 +279,8 @@ If you catch yourself thinking:
 | "Reference too long, I'll adapt the pattern" | Partial understanding guarantees bugs. Read it completely. |
 | "I see the problem, let me fix it" | Seeing symptoms ≠ understanding root cause. |
 | "One more fix attempt" (after 2+ failures) | 3+ failures = architectural problem. Question pattern, don't fix again. |
+| "Just run it again with more time" | The failed run may have already written the answer; enumerate its artifacts first. |
+| "It's probably flaky" | Flakiness is a measurement (N runs, recorded), not a shrug — and an unexplained pass after an unexplained fail is two anomalies, not zero. |
 
 ## Quick Reference
 
