@@ -15,10 +15,16 @@ Checks:
   D5 WARN   two skills whose descriptions share identical first 8 words
   D6 ERROR  hooks.json is invalid JSON, or a referenced hook file is
             missing / not executable
+  D7 WARN   (opt-in via --specs) a Load-bearing choices table row tagged
+            imported/assumed has an empty/placeholder buys/costs/inversion/
+            evidence cell, or an evidence cell carrying no link/path
+            (spec §2.11 assumption assay; off unless --specs is passed)
 
 Output: one line per finding, then a SUMMARY line. Exit 0 by default; with
---strict, exit 1 when there is >=1 ERROR. Public API for tests: scan(root)
-returns a list of Finding(id, severity, path, message) namedtuples.
+--strict, exit 1 when there is >=1 ERROR (D7 is WARN, so the assay never fails
+the run — a soft gate). Public API for tests: scan(root) runs the always-on
+fleet lint (D1-D6); scan_specs(dirs) runs the opt-in spec assay (D7); both
+return a list of Finding(id, severity, path, message) namedtuples.
 
 The hooks.json parser accepts BOTH the fork's real schema
 (`{"hooks": {"<Event>": [{"matcher": ..., "hooks": [{"type", "command"}]}]}}`)
@@ -276,6 +282,176 @@ def scan(root):
     return findings
 
 
+# --- Spec assumption-assay lint (D7) — opt-in via --specs ------------------
+# Default spec dirs are resolved against CWD, deliberately independent of
+# --root: the governed design specs may live in a parent repo, not beside this
+# script. Missing dirs are skipped silently.
+DEFAULT_SPEC_DIRS = (os.path.join("docs", "specs"),
+                     os.path.join("docs", "superpowers", "specs"))
+_TABLE_SEP_CELL_RE = re.compile(r"^:?-+:?$")
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\([^)]+\)")
+# Cell values that count as unfilled — the assay demands real justification,
+# not a dash or a "TBD" standing in for one.
+_PLACEHOLDER_CELLS = frozenset({"-", "–", "—", "tbd", "?"})
+# Provenance substrings whose rows the assay scrutinises (derived is exempt).
+_ASSAY_PROVENANCE = ("imported", "assumed")
+
+
+def _rel_cwd(path):
+    """Path relative to CWD when possible (spec dirs are CWD-relative), else
+    the absolute path."""
+    try:
+        return os.path.relpath(path, os.getcwd())
+    except ValueError:
+        return path
+
+
+def _split_table_row(line):
+    """Split one markdown table line into stripped cell strings, dropping the
+    optional leading/trailing border pipes."""
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _is_separator_row(cells):
+    """True when every cell is a GFM header separator (`---`, `:--`, `:-:`)."""
+    return bool(cells) and all(_TABLE_SEP_CELL_RE.match(c) for c in cells)
+
+
+def _iter_md_tables(text):
+    """Yield (header_cells, [(lineno, row_cells), ...]) for each GFM table — a
+    header row immediately followed by a separator row — in `text`. Lines that
+    merely contain a stray pipe are not mistaken for tables (a separator must
+    follow the header)."""
+    lines = text.splitlines()
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        if ("|" in line and line.strip() and i + 1 < n and "|" in lines[i + 1]
+                and _is_separator_row(_split_table_row(lines[i + 1]))):
+            header = _split_table_row(line)
+            rows = []
+            j = i + 2
+            while j < n and "|" in lines[j] and lines[j].strip():
+                rows.append((j + 1, _split_table_row(lines[j])))
+                j += 1
+            yield header, rows
+            i = j
+            continue
+        i += 1
+
+
+def _col_index(header_cells, keyword):
+    """Index of the first header cell containing `keyword` (case-insensitive),
+    or None when no column matches."""
+    for idx, h in enumerate(header_cells):
+        if keyword in h.lower():
+            return idx
+    return None
+
+
+def _cell(row_cells, idx):
+    """The stripped cell at `idx`, or "" when the column is absent/short."""
+    return row_cells[idx].strip() if idx is not None and idx < len(row_cells) else ""
+
+
+def _is_unfilled(cell):
+    """True when a cell is empty or holds placeholder junk — no real content."""
+    c = cell.strip()
+    return not c or c.lower() in _PLACEHOLDER_CELLS
+
+
+def _lacks_evidence_link(cell):
+    """True when a non-empty evidence cell carries no reference: no markdown
+    link, no URL, and no path-like token (a `/`)."""
+    c = cell.strip()
+    if _MD_LINK_RE.search(c) or "://" in c:
+        return False
+    return "/" not in c
+
+
+def _lint_spec_file(path):
+    """Assay one spec file's Load-bearing choices table (D7). See scan_specs
+    for the WHY. Returns Finding namedtuples (id 'D7', severity WARN); an
+    unreadable file yields none (soft gates never block)."""
+    findings = []
+    try:
+        text = _read(path)
+    except OSError:
+        return findings
+    rel = _rel_cwd(path)
+    for header, rows in _iter_md_tables(text):
+        choice_i = _col_index(header, "choice")
+        prov_i = _col_index(header, "provenance")
+        if choice_i is None or prov_i is None:
+            continue  # not a Load-bearing choices table — skip silently
+        buys_i = _col_index(header, "buys")
+        costs_i = _col_index(header, "cost")
+        inv_i = _col_index(header, "inversion")
+        ev_i = _col_index(header, "evidence")
+        for lineno, row in rows:
+            if not any(tag in _cell(row, prov_i).lower() for tag in _ASSAY_PROVENANCE):
+                continue  # derived (or untagged) rows are exempt
+            failed = []
+            if _is_unfilled(_cell(row, buys_i)):
+                failed.append("buys")
+            if _is_unfilled(_cell(row, costs_i)):
+                failed.append("costs")
+            if _is_unfilled(_cell(row, inv_i)):
+                failed.append("inversion")
+            ev = _cell(row, ev_i)
+            if _is_unfilled(ev):
+                failed.append("evidence")
+            elif _lacks_evidence_link(ev):
+                failed.append("evidence(no link/path)")
+            if not failed:
+                continue
+            choice = _cell(row, choice_i) or "(unnamed choice)"
+            tag = _cell(row, prov_i)
+            findings.append(Finding(
+                "D7", "WARN", rel,
+                "load-bearing choice '%s' (line %d) is tagged '%s' but cell(s) [%s] "
+                "are empty/placeholder or lack an evidence link; fix: fill each with a "
+                "concrete justification (evidence must cite a [text](link), a URL, or a "
+                "repo path) or retag the row 'derived' if it rests on the project's own "
+                "constraints" % (choice, lineno, tag, ", ".join(failed))))
+    return findings
+
+
+def scan_specs(dirs):
+    """Assumption assay (spec §2.11) — the mechanical half, rung 3 of the
+    enforcement ladder. An imported/assumed load-bearing choice with an empty
+    buys/costs/inversion/evidence cell (or an evidence cell with no link) is
+    UNRATIFIED intent smuggled into a design: a claim of grounding with no
+    turnstile behind it. Prose exhortations to self-check measurably fail — so
+    this lints the convention mechanically instead of trusting the author to.
+
+    WARN-only and opt-in (--specs): the convention is new and older specs
+    legitimately predate it, so a file carrying no Load-bearing choices table is
+    skipped silently rather than nagged. Derived rows are exempt — their
+    grounding is the project's own constraints. Returns a flat list of Finding
+    namedtuples (all id 'D7', severity WARN); never raises on a missing dir or
+    unreadable file (soft gates never block)."""
+    md_files = []
+    for d in dirs:
+        ad = os.path.abspath(d)
+        if not os.path.isdir(ad):
+            continue  # non-existent spec dir: silent skip
+        for dirpath, dirnames, filenames in os.walk(ad):
+            dirnames.sort()
+            for fn in filenames:
+                if fn.endswith(".md"):
+                    md_files.append(os.path.join(dirpath, fn))
+    findings = []
+    for path in sorted(md_files):
+        findings.extend(_lint_spec_file(path))
+    return findings
+
+
 def _format(f):
     return "%s %s %s: %s" % (f.id, f.severity, f.path, f.message)
 
@@ -292,10 +468,19 @@ def main(argv=None):
                         help="exit 1 when there is at least one ERROR finding")
     parser.add_argument("--root", default=None,
                         help="repo root to scan (default: the repo containing this script)")
+    parser.add_argument(
+        "--specs", nargs="*", default=None, metavar="DIR",
+        help="also lint Load-bearing choices tables (§2.11 assumption assay) in "
+             "spec markdown under each DIR; with no DIR, defaults to ./docs/specs "
+             "and ./docs/superpowers/specs (CWD-relative; missing dirs skipped). "
+             "Soft: emits WARN findings only, never fails the run.")
     args = parser.parse_args(argv)
 
     root = os.path.abspath(args.root) if args.root else _default_root()
     findings = scan(root)
+    if args.specs is not None:
+        spec_dirs = args.specs if args.specs else list(DEFAULT_SPEC_DIRS)
+        findings = findings + scan_specs(spec_dirs)
     for f in findings:
         print(_format(f))
 
