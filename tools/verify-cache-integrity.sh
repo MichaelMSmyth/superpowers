@@ -7,14 +7,31 @@
 #   cries wolf on every honest dev cycle (the cache legitimately lags HEAD between a
 #   ship and the next restart). The round-1 SessionStart-in-the-cache design was PULLED
 #   for exactly this. So this checker fixes all three defects:
-#     (1) runs from the CLONE — a trusted location the cache-writer does not control;
+#     (1) runs from the CLONE, a LESS-EXPOSED vantage than the cache. HONEST SCOPE (no
+#         overclaim): running here raises the bar against a CACHE-SCOPED writer, against
+#         ACCIDENTAL divergence (the stale-cache reality of the edit-test loop), against
+#         SUPPLY-CHAIN-INTO-CACHE poison, and against DORMANT/NAIVE poison caught before
+#         it executes. It is NOT a defense against a live SAME-UID attacker: an adversary
+#         running as this user, in a session, has our privileges and can equally edit this
+#         clone script or the crontab. So this is DETECTION FROM A LESS-EXPOSED VANTAGE,
+#         NOT PREVENTION — and the clone is not a "trusted location the writer can't touch".
 #     (2) compares each cache dir to the clone AT THE COMMIT THAT SHIPPED that version
 #         (not HEAD) — which kills the stale-cache false-positive class entirely; and
 #     (3) makes a couldn't-verify state VISIBLE, never silent — no false comfort.
 #
-# SURFACES COVERED: hooks/* (the executed surface) AND skills/**/SKILL.md plus
-#   skill-bundled skills/**/*.sh (the injected-prose surface). Round-1's hooks/-only
-#   scope was itself a finding; round 2 covers both.
+#   WHAT "VERIFIED" MEANS — and does not: VERIFIED asserts the cache is BYTE-UNCHANGED
+#   since the commit that shipped it — NOT that it is "safe". A commit poisoned at or
+#   before ship verifies clean here; guarding THAT is the sync-review path (F1/F4), not
+#   this sweep.
+#
+# SURFACES COVERED: the FULL governed tree. Every path in the shipped commit is compared,
+#   and every file in the cache dir is accounted for (modified / missing / extra). The
+#   ONLY files excluded are genuine build artifacts by EXACT extension (*.pyc / *.pyo) —
+#   never by directory subtree, so an injected NON-bytecode file under __pycache__/ (e.g.
+#   a payload .sh) IS still flagged. (Round-1 filtered to SKILL.md|*.sh and excluded the
+#   whole __pycache__/ subtree — both were findings: the first left reference bodies, .js,
+#   commands/, agents/ and manifests unattested; the second reported a __pycache__ payload
+#   as VERIFIED.)
 #
 # RUNG 5, AND NOT REAL-TIME: this is a periodic cron sweep. A session tampered with
 #   between two sweeps runs BEFORE the next sweep catches it — that residual is
@@ -70,7 +87,12 @@ print_cron() {
 # Superpower Mod cache-integrity sweep — rung 5, weekly (Mon 09:30). Reports only;
 # never blocks. NOT real-time: tampering between sweeps runs before the next sweep.
 # Install by hand (this flag only PRINTS the line, it does not touch your crontab):
-30 9 * * 1 "$SELF"
+#
+# DELIVERY (Fix 4): the line below appends BOTH stdout and stderr to the tool's log
+# sink, so every verdict is durably recorded even with no MTA and no desktop. On a
+# headless / no-DISPLAY box notify-send is a silent no-op, so THIS LOG is the sink that
+# matters — read it. To ALSO receive mail, set MAILTO=you@host at the top of the crontab.
+30 9 * * 1 "$SELF" >> "$LOG_FILE" 2>&1
 EOF
 }
 
@@ -94,57 +116,69 @@ verify_dir() { # verify_dir <cache_dir>
     return 1
   fi
 
-  # version -> shipped commit. Anchored ($) so 'ship ...mod.1' can't match '...mod.15'.
-  local sha
-  sha="$(git -C "$CLONE_ROOT" log --all --grep "ship ${version}\$" --format=%H -1 2>>"$LOG_FILE")"
-  if [ -z "$sha" ]; then
+  # version -> shipped commit, resolved EXACTLY (Fix 2). The old `git log --all --grep
+  # "ship ${version}\$"` was unsafe four ways: it treated the version as a REGEX (a literal
+  # '.' matched any char), anchored to end-of-LINE (a body line could match), searched
+  # remote-tracking refs (--all), and silently took the newest of several matches (-1).
+  # Instead: enumerate LOCAL-branch commits only, match the subject by SHELL STRING
+  # EQUALITY against the literal "chore: ship <version>", and refuse to guess when the
+  # answer is not unique. 0 matches -> no ship commit; >=2 distinct SHAs -> ambiguous.
+  local want="chore: ship ${version}"
+  local -A shas=()
+  local h subj
+  while IFS=$'\t' read -r h subj; do
+    [ -n "$h" ] || continue
+    [ "$subj" = "$want" ] && shas["$h"]=1
+  done < <(git -C "$CLONE_ROOT" log --branches --format='%H%x09%s' 2>>"$LOG_FILE")
+
+  if [ "${#shas[@]}" -eq 0 ]; then
     printf 'COULD-NOT-VERIFY %s: no ship commit\n' "$version"
     log "CNV no-ship-commit version=$version"
     notify "COULD-NOT-VERIFY $version: no ship commit found"
     return 1
   fi
+  if [ "${#shas[@]}" -gt 1 ]; then
+    printf 'COULD-NOT-VERIFY %s: ambiguous ship commit (%s matching commits)\n' "$version" "${#shas[@]}"
+    log "CNV ambiguous-ship version=$version matches=${#shas[@]}"
+    notify "COULD-NOT-VERIFY $version: ambiguous ship commit (${#shas[@]} matches)"
+    return 1
+  fi
+  local sha=""
+  for h in "${!shas[@]}"; do sha="$h"; done
 
-  # Governed file set from the SHIPPED tree (the authority on what should be present).
+  # FULL governed-tree comparison (Fix 1). The SHIPPED side is EVERY path in the commit
+  # (no filtering to SKILL.md|*.sh); the CACHE side is EVERY file under the version dir.
   local -A ship=() cache=()
   local p rel
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    case "$p" in
-      hooks/*) ship["$p"]=1 ;;
-      skills/*) case "$p" in */SKILL.md|*.sh) ship["$p"]=1 ;; esac ;;
-    esac
-  done < <(git -C "$CLONE_ROOT" ls-tree -r --name-only "$sha" -- hooks skills 2>>"$LOG_FILE")
+    ship["$p"]=1
+  done < <(git -C "$CLONE_ROOT" ls-tree -r --name-only "$sha" 2>>"$LOG_FILE")
 
   if [ "${#ship[@]}" -eq 0 ]; then
-    printf 'COULD-NOT-VERIFY %s: shipped commit has no hooks/ or skills/ files to attest\n' "$version"
+    printf 'COULD-NOT-VERIFY %s: shipped commit has no files to attest\n' "$version"
     log "CNV empty-shipped-set version=$version sha=$sha"
     notify "COULD-NOT-VERIFY $version: shipped tree has nothing to attest"
     return 1
   fi
 
-  # Governed file set from the CACHE. Exclude __pycache__/ (git-ignored, regenerable
-  # Python bytecode — never source; the .py it derives from IS compared).
-  if [ -d "$dir/hooks" ]; then
-    while IFS= read -r rel; do
-      [ -n "$rel" ] || continue
-      case "$rel" in *__pycache__/*) continue ;; esac
-      cache["hooks/$rel"]=1
-    done < <(find "$dir/hooks" -type f -printf '%P\n' 2>>"$LOG_FILE")
-  fi
-  if [ -d "$dir/skills" ]; then
-    while IFS= read -r rel; do
-      [ -n "$rel" ] || continue
-      case "$rel" in */SKILL.md|*.sh) cache["skills/$rel"]=1 ;; esac
-    done < <(find "$dir/skills" -type f -printf '%P\n' 2>>"$LOG_FILE")
-  fi
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    cache["$rel"]=1
+  done < <(find "$dir" -type f -printf '%P\n' 2>>"$LOG_FILE")
 
-  # Compare the UNION: a shipped file missing from the cache, or a cache file absent
-  # from the shipped tree (injected), is a divergence — same as a byte mismatch.
+  # Compare the UNION. A shipped file that is byte-changed, unreadable, or missing from
+  # the cache is a divergence; a cache file with no shipped counterpart (injected) is a
+  # divergence UNLESS it is git-ignored Python bytecode by EXACT extension (*.pyc/*.pyo).
+  # NB: the exclusion is by extension, NEVER by directory subtree — a *.sh/*.py/anything
+  # non-bytecode under __pycache__/ has no shipped counterpart and IS flagged as extra.
+  # (check-ignore is deliberately NOT used: this repo's global git excludes ignore the
+  # whole __pycache__/ tree, so check-ignore would wrongly clear a __pycache__ payload.)
   local -a diverged=()
   local -A seen=()
   for p in "${!ship[@]}" "${!cache[@]}"; do
     [ -n "${seen[$p]:-}" ] && continue
-    seen[$p]=1
+    seen["$p"]=1
     local in_s="${ship[$p]:-}" in_c="${cache[$p]:-}"
     if [ -n "$in_s" ] && [ -n "$in_c" ]; then
       local a b
@@ -158,7 +192,10 @@ verify_dir() { # verify_dir <cache_dir>
     elif [ -n "$in_s" ]; then
       diverged+=("$p (missing)")
     else
-      diverged+=("$p (extra)")
+      case "$p" in
+        *.pyc|*.pyo) : ;;   # git-ignored bytecode, never in the shipped tree — skip
+        *) diverged+=("$p (extra)") ;;
+      esac
     fi
   done
 
