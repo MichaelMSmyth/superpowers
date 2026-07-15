@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import namedtuple
 
 # --- last-synced parse (re-implements lib/upstream.sh parse_last_synced) -----
 
@@ -91,6 +92,11 @@ def _existed_at(repo, base, path):
 
 # --- classification ----------------------------------------------------------
 
+# The remote-tracking ref the fork diffs inbound upstream work against. Named
+# once so classify() and the security review resolve the SAME "upstream" truth.
+UPSTREAM_REF = "upstream/main"
+
+
 class DriftReport:
     """Three-way drift between base..upstream/main and base..HEAD."""
 
@@ -108,7 +114,7 @@ def classify(repo, base):
       ours_only     = O - U   (our additive / independent work)
       both          = U & O   (collision — reconcile by hand)
     """
-    U = _changed(repo, base, "upstream/main")
+    U = _changed(repo, base, UPSTREAM_REF)
     O = _changed(repo, base, "HEAD")
     return DriftReport(
         upstream_only=U - O,
@@ -216,6 +222,140 @@ def token_cost(repo):
     return rows, total_chars, est_tokens("".join(t for _, t in parts))
 
 
+# --- security review (F1: danger-ranking, advisory) --------------------------
+#
+# The token-cost baseline weighs inbound changes by SIZE; the smallest, most
+# dangerous change (a one-line prompt-injection in a skill body, a quiet edit to
+# a file that auto-executes) is the least-flagged by size. This section makes the
+# dangerous changes LOUD. It is purely advisory — it never changes exit codes.
+#
+# "Inbound" == files changed base..UPSTREAM_REF (upstream-only OR both-changed):
+# exactly `_changed(repo, base, UPSTREAM_REF)`.
+
+# (1) Sensitive paths: files that auto-execute or define what executes. A change
+# here outranks any token-size signal. Matched by path prefix or basename so the
+# whole hooks/ and .claude-plugin/ trees (hooks.json, plugin.json,
+# marketplace.json, run-hook.cmd, …) are covered.
+SENSITIVE_PATH_PREFIXES = ("hooks/", ".claude-plugin/")
+SENSITIVE_PATH_BASENAMES = ("run-hook.cmd",)
+
+# (2) Skill-body imperative-shell / exfil patterns. Auditable by construction:
+# one named (label, regex) row per class. IGNORECASE throughout. False positives
+# are acceptable here (advisory — over-flagging a skill body beats missing an
+# injection); the scan is deliberately scoped to skills/*/SKILL.md added lines
+# only, so the plugin's own legitimate tool docs are never scanned.
+_SHELL_PATTERN_SOURCES = [
+    # pipe-to-shell: `| sh`, `| bash`, `curl … | sh`, `wget … | sh`
+    ("pipe-to-shell",   r"\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash)\b"),
+    ("curl-pipe-shell", r"\b(?:curl|wget)\b[^\n]*\|\s*(?:sh|bash)\b"),
+    # eval / command substitution / backtick command-exec
+    ("eval",            r"\beval\b\s"),
+    ("command-subst",   r"\$\("),
+    ("backtick-exec",   r"`[^`\n]*[|;&][^`\n]*`"),
+    # destructive / exfil
+    ("rm-rf",           r"\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b"),
+    ("base64-decode",   r"\bbase64\b[^\n]*(?:-d\b|--decode\b)"),
+    ("dotfile-redirect", r">>?\s*~/\."),
+]
+SHELL_PATTERNS = [(label, re.compile(src, re.IGNORECASE))
+                  for label, src in _SHELL_PATTERN_SOURCES]
+
+# A NEW http(s):// URL (absent from the base version) is exfil-shaped; one
+# already in base is not novel and is not flagged.
+URL_RE = re.compile(r"https?://[^\s)\]}\"'`>]+", re.IGNORECASE)
+
+_SKILL_MD_RE = re.compile(r"^skills/[^/]+/SKILL\.md$")
+_SNIPPET_CAP = 160
+
+SkillHit = namedtuple("SkillHit", "path lineno kind snippet")
+SecurityFindings = namedtuple("SecurityFindings", "sensitive_paths skill_hits")
+
+
+def is_sensitive_path(path):
+    """True iff <path> is an auto-executing / execution-defining surface."""
+    if any(path.startswith(p) for p in SENSITIVE_PATH_PREFIXES):
+        return True
+    return os.path.basename(path) in SENSITIVE_PATH_BASENAMES
+
+
+def _show(repo, ref, path):
+    """Content of <path> at <ref> via `git show ref:path` ("" if absent/error)."""
+    rc, out, _ = _git(repo, "show", "%s:%s" % (ref, path))
+    return out if rc == 0 else ""
+
+
+def _scan_skill_body(repo, base, path, upstream_ref):
+    """Flag imperative-shell / exfil patterns in the UPSTREAM version of <path>.
+
+    Scans only lines PRESENT UPSTREAM BUT NOT IN BASE (added/changed lines) so a
+    benign edit to a skill that already contains shell examples is not re-flagged,
+    and a brand-new upstream skill (no base version) is scanned in full. URLs are
+    flagged only when absent from the base version's URL set.
+    """
+    upstream_text = _show(repo, upstream_ref, path)
+    if not upstream_text:
+        return []
+    base_text = _show(repo, base, path)
+    base_lines = {ln.strip() for ln in base_text.splitlines()}
+    base_urls = set(URL_RE.findall(base_text))
+
+    hits, seen = [], set()
+
+    def _add(lineno, kind, snippet):
+        key = (path, lineno, kind)
+        if key not in seen:
+            seen.add(key)
+            hits.append(SkillHit(path, lineno, kind, snippet))
+
+    for lineno, line in enumerate(upstream_text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped in base_lines:
+            continue  # blank, or unchanged from base — not inbound-new
+        snippet = stripped if len(stripped) <= _SNIPPET_CAP else stripped[:_SNIPPET_CAP] + "..."
+        for label, rx in SHELL_PATTERNS:
+            if rx.search(line):
+                _add(lineno, label, snippet)
+        for url in URL_RE.findall(line):
+            if url not in base_urls:
+                _add(lineno, "new-url", snippet)
+    return hits
+
+
+def security_review(repo, base, upstream_ref=UPSTREAM_REF):
+    """Advisory danger-ranking of inbound (base..upstream) changes.
+
+    Returns SecurityFindings(sensitive_paths, skill_hits). Never raises on git
+    error (empty inbound set -> clean findings); never affects exit codes.
+    """
+    inbound = sorted(_changed(repo, base, upstream_ref))
+    sensitive = [p for p in inbound if is_sensitive_path(p)]
+    skill_hits = []
+    for p in inbound:
+        if _SKILL_MD_RE.match(p):
+            skill_hits.extend(_scan_skill_body(repo, base, p, upstream_ref))
+    return SecurityFindings(sensitive_paths=sensitive, skill_hits=skill_hits)
+
+
+def _security_section(sr):
+    """Render the SECURITY REVIEW block as a list of lines.
+
+    Prints an explicit clean line when there is nothing to flag, so its absence
+    is never ambiguous (no silent pass)."""
+    if not sr.sensitive_paths and not sr.skill_hits:
+        return ["SECURITY REVIEW: no sensitive-path or skill-body-shell changes inbound"]
+    lines = ["SECURITY REVIEW — inbound danger-ranking (advisory; does not gate the sync)"]
+    if sr.sensitive_paths:
+        lines.append("SENSITIVE PATHS CHANGED — review by hand, not by size (%d)"
+                     % len(sr.sensitive_paths))
+        lines.extend("  %s" % p for p in sr.sensitive_paths)
+    if sr.skill_hits:
+        lines.append("SKILL BODIES WITH SHELL/EXFIL PATTERNS — possible prose injection (%d)"
+                     % len(sr.skill_hits))
+        for h in sr.skill_hits:
+            lines.append("  %-30s L%-4d [%s] %s" % (h.path, h.lineno, h.kind, h.snippet))
+    return lines
+
+
 # --- rendering ---------------------------------------------------------------
 
 def _section(title, paths):
@@ -244,6 +384,9 @@ def _render(repo, base):
         out.extend(warnings)
     else:
         out.append("all inherited edits are ledgered in MODS.md")
+    out.append("")
+
+    out.extend(_security_section(security_review(repo, base)))
     out.append("")
 
     rows, total_chars, total_tokens = token_cost(repo)
