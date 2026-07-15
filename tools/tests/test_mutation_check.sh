@@ -25,7 +25,15 @@ done
 out="$(PATH="$STUB" bash "$MC" 2>&1)"; rc=$?
 t "missing python3.12 refused instructively" 2 "$rc" "python3.12" "$out"
 
-# 4. live smoke (gated): synthetic weak module must yield survivors
+# 4. resolution widened to hooks/ — claims_evidence.py is now auditable (fast/static,
+#    no mutmut). The audit target lives at hooks/claims_evidence.py; the old hardcoded
+#    tools/claims_evidence.py never existed (that was the gap); and the tool now searches
+#    hooks/ as a source root. A live end-to-end resolution check is gated below.
+[ -f "$REPO_ROOT/hooks/claims_evidence.py" ]; t "claims_evidence source resolvable under hooks/" 0 $? "" ""
+[ ! -f "$REPO_ROOT/tools/claims_evidence.py" ]; t "no legacy tools/claims_evidence.py (old resolver would miss)" 0 $? "" ""
+grep -qF 'hooks/${mod}.py' "$MC"; t "tool resolves module sources under hooks/" 0 $? "" ""
+
+# 5. live smoke (gated): synthetic weak module must yield survivors
 if [ "${RUN_MUTATION_SMOKE:-0}" = "1" ]; then
   FIX="$(mktemp -d)"
   mkdir -p "$FIX/tools/tests"
@@ -51,11 +59,34 @@ class T(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 EOF
+  # a second weak module UNDER hooks/ — exercises the tools/->hooks/ resolution
+  mkdir -p "$FIX/hooks"
+  cat > "$FIX/hooks/mod_b.py" <<'EOF'
+def add(a, b):
+    return a + b
+EOF
+  cat > "$FIX/tools/tests/test_mod_b.py" <<'EOF'
+import importlib.util, os, unittest
+root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+spec = importlib.util.spec_from_file_location("mod_b", os.path.join(root, "hooks", "mod_b.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+class T(unittest.TestCase):
+    def test_weak(self):
+        m.add(1, 2)          # calls but asserts nothing: mutants survive
+if __name__ == "__main__":
+    unittest.main()
+EOF
   git -C "$FIX" init -q && git -C "$FIX" add -A && git -C "$FIX" -c user.email=t@t -c user.name=t commit -qm fix
   out="$("$MC" --repo "$FIX" --modules "mod_a" 2>&1)"; rc=$?
   t "smoke exits 0" 0 "$rc" "mod_a" "$out"
   surv="$(grep -E '^ *mod_a' <<<"$out" | awk '{print $(NF-1)}')"
   [ "${surv:-0}" -ge 1 ]; t "smoke reports >=1 survivor" 0 $? "" ""
+  # hooks/ resolution: mod_b lives under hooks/, must resolve (not MISSING) and mutate
+  outb="$("$MC" --repo "$FIX" --modules "mod_b" 2>&1)"; rc=$?
+  t "smoke(hooks/) exits 0" 0 "$rc" "mod_b" "$outb"
+  grep -qE '^ *mod_b .*MISSING' <<<"$outb"; [ $? -ne 0 ]; t "smoke(hooks/) resolved (not MISSING)" 0 $? "" ""
+  survb="$(grep -E '^ *mod_b' <<<"$outb" | awk '{print $(NF-1)}')"
+  [ "${survb:-0}" -ge 1 ]; t "smoke(hooks/) reports >=1 survivor" 0 $? "" ""
   # safety: the fixture working tree must be pristine afterwards
   [ -z "$(git -C "$FIX" status --porcelain)" ]; t "fixture tree untouched" 0 $? "" ""
   rm -rf "$FIX"

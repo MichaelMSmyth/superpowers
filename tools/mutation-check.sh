@@ -32,6 +32,8 @@
 #         suites in tools/tests/ need 2.x's `runner=`. Installed into a cached venv.
 #       - python3.12 : mutmut 2.5.1 crashes on Python 3.14 (`cannot pickle
 #         'itertools.count'`). A crashed audit reads as a clean one — refuse loudly.
+#  4. Module sources are resolved under tools/ then hooks/ (first that exists), so a
+#     --modules name like claims_evidence audits hooks/claims_evidence.py, not only tools/.
 #
 # HONEST EXIT SEMANTICS — this is an audit REPORTER; posture is the caller's:
 #   0  report produced (survivors are DATA, not failure) — the default, always,
@@ -67,7 +69,8 @@ SAFETY INVARIANT (non-negotiable):
 
 FLAGS:
   --repo <path>        Repo to audit (default: this script's own repo).
-  --modules "<names>"  Space-separated module basenames under tools/ to mutate
+  --modules "<names>"  Space-separated module basenames to mutate; each resolves
+                       to its .py under tools/ then hooks/ (first that exists).
                        (default: "drift_report doctor trigger_eval").
   --fail-over <pct>    If given, exit 1 when any module's survivor rate > pct.
                        Omitted (default): exit 0 always — this is a reporter.
@@ -198,10 +201,14 @@ SURV_LINES=()
 FAILED_MODS=()
 
 for mod in $MODULES; do
-  src="tools/${mod}.py"
-  if [ ! -f "$src" ]; then
+  # module source resolved under tools/ then hooks/ (first that exists)
+  src=""
+  for cand in "tools/${mod}.py" "hooks/${mod}.py"; do
+    [ -f "$cand" ] && { src="$cand"; break; }
+  done
+  if [ -z "$src" ]; then
     ROWS+=("$(printf '%-14s %8s %8s %9s %9s' "$mod" "n/a" "n/a" "n/a" "MISSING")")
-    SURV_LINES+=("  [${mod}] source not found in scratch repo ($src) — skipped")
+    SURV_LINES+=("  [${mod}] source not found in scratch repo (tools/${mod}.py or hooks/${mod}.py) — skipped")
     continue
   fi
 
