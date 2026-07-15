@@ -19,6 +19,8 @@ Do NOT invoke any implementation skill, write any code, scaffold any project, or
 
 Every project goes through this process. A todo list, a single-function utility, a config change — all of them. "Simple" projects are where unexamined assumptions cause the most wasted work. The design can be short (a few sentences for truly simple projects), but you MUST present it and get approval.
 
+Speccing the stated request without the divergence check is how a symptom gets faithfully built — the most expensive bugs come from building the wrong thing, well.
+
 ## Checklist
 
 You MUST create a task for each of these items and complete them in order:
@@ -74,10 +76,17 @@ digraph brainstorming {
 - Check out the current project state first (files, docs, recent commits)
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
+- **Excavate before asking** — run this after loading context and before the clarifying questions below; make the check explicit, because context-loading measurably suppresses the clarifying instinct (finding: retrieved context makes asking *less* likely):
+  - *Goal-divergence check:* silently generate 2–3 divergent readings of the user's underlying goal. If they'd produce materially the same design, proceed. If they diverge, surface the divergence as candidate readings (multiple choice), not an open interrogation — the discriminating question is "what do you ultimately want to be true afterward?", delivered as those readings (the XY escape). If there is no statable idea to refine, hand off to the `intent` skill.
+  - *Evidence gate:* for each claimed problem or constraint, ask "observed, or remembered?" — go look at code, logs, and data before asking the human. Questions you can answer from evidence never reach the human.
+  - *Breadth check:* before converging on the problem statement, ask "is this the whole problem or one branch of several?" Do the MECE decomposition yourself; reach the human only when which-branch is a genuine fork.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea
 - Prefer multiple choice questions when possible, but open-ended is fine too
 - Only one question per message - if a topic needs more exploration, break it into multiple questions
 - Focus on understanding: purpose, constraints, success criteria
+- Attach your best-guess default to every question so the human can confirm in one token; name the fork the question discriminates and aim at the highest-uncertainty fork
+- Give every option set an explicit "none of these" escape — a closed set is itself a leading question (Loftus, measured)
+- Stop asking when the next answer wouldn't change the spec
 
 **Exploring approaches:**
 
@@ -114,6 +123,9 @@ digraph brainstorming {
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git
+
+**Load-bearing choices:**
+When the emerging design rests on load-bearing choices, tag each by provenance: *derived* (from this project's constraints), *imported* (rode in with borrowed material), or *assumed* (never examined). Run every imported and assumed choice through the four-question assay before you present the design — what it buys, what it costs, inversion (can the presumed asset instead harm us), and what current reality says (measured now, not remembered). Record the result in the spec as a **Load-bearing choices table** (columns: choice · provenance · buys · costs · inversion · evidence link). You write this table into the spec; it is never handed to the human to fill.
 
 **Spec Self-Review:**
 After writing the spec document, look at it with fresh eyes:
